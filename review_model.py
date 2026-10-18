@@ -1,5 +1,4 @@
 import bpy
-import math
 import os
 import sys
 from mathutils import Vector
@@ -91,6 +90,29 @@ for name, direction in views:
     bpy.ops.render.render(write_still=True)
     bpy.data.objects.remove(camera, do_unlink=True)
 
+# Save a temporary file with a fitted material-preview viewport so a GUI runner
+# can capture the real Blender interface under Xvfb.
+scene.camera = None
+for obj in list(scene.objects):
+    if obj.type != "MESH":
+        obj.hide_set(True)
+for obj in meshes:
+    obj.select_set(True)
+bpy.context.view_layer.objects.active = meshes[0]
+front_rotation = Vector((0.0, -1.0, 0.0)).to_track_quat("Z", "Y")
+for screen in bpy.data.screens:
+    for area in screen.areas:
+        if area.type == "VIEW_3D":
+            space = area.spaces.active
+            space.region_3d.view_location = center
+            space.region_3d.view_distance = scale * 2.8
+            space.region_3d.view_rotation = front_rotation
+            space.region_3d.view_perspective = "ORTHO"
+            space.shading.type = "MATERIAL"
+            space.overlay.show_overlays = False
+viewport_file = os.path.join(output_dir, "viewport-review.blend")
+bpy.ops.wm.save_as_mainfile(filepath=viewport_file)
+
 report_path = os.path.join(output_dir, "model-review.txt")
 with open(report_path, "w", encoding="utf-8") as report:
     report.write("Blender visual review\n")
@@ -101,5 +123,5 @@ with open(report_path, "w", encoding="utf-8") as report:
     report.write("Meshes:\n")
     for obj in meshes:
         report.write(f"- {obj.name}: {len(obj.data.vertices)} vertices, {len(obj.data.polygons)} faces\n")
-    report.write("Views: front.png, three_quarter.png, profile.png\n")
+    report.write("Images: front.png, three_quarter.png, profile.png, blender-interface.png\n")
 print("VISUAL_REVIEW_OK", report_path)
