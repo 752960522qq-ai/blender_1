@@ -38,7 +38,8 @@ slo,shi,sc=bounds(anchor); tlo,thi,tc=bounds(face)
 sz=shi.z-slo.z; tz=thi.z-tlo.z
 if sz <= 1e-6 or tz <= 1e-6: raise RuntimeError('Invalid anchor/face size')
 scale=(tz/sz)*1.015
-mapping=Matrix.Translation(tc) @ Matrix.Scale(scale,4) @ Matrix.Translation(-sc)
+depth_scale=((thi.y-tlo.y)/(shi.y-slo.y)*1.015)/scale
+mapping=Matrix.Translation(tc) @ Matrix.Diagonal((1.0,depth_scale,1.0,1.0)) @ Matrix.Scale(scale,4) @ Matrix.Translation(-sc)
 
 # Bake source hierarchy transforms into each hair mesh, then fit it to the target head.
 for obj in hair_meshes:
@@ -108,13 +109,13 @@ doc=json.loads(glb[20:20+json_len].decode('utf-8').rstrip(' \t\r\n\0'))
 for material in doc.get('materials',[]):
     if material.get('name','').lower().startswith('warm chestnut'):
         pbr=material.setdefault('pbrMetallicRoughness',{})
-        pbr['baseColorFactor']=[0.30,0.12,0.055,1.0]
+        pbr['baseColorFactor']=[0.45,0.22,0.115,1.0]
         pbr['metallicFactor']=0.0
         pbr['roughnessFactor']=0.34
         ext=material.setdefault('extensions',{})
         if 'KHR_materials_ior' in ext: ext['KHR_materials_ior']['ior']=1.45
         if 'KHR_materials_specular' in ext:
-            ext['KHR_materials_specular']['specularFactor']=0.24
+            ext['KHR_materials_specular']['specularFactor']=0.20
             ext['KHR_materials_specular'].pop('specularColorFactor',None)
 doc['extensionsUsed']=[x for x in doc.get('extensionsUsed',[]) if x not in ('KHR_materials_ior','KHR_materials_specular') or any(x in m.get('extensions',{}) for m in doc.get('materials',[]))]
 json_chunk=json.dumps(doc,separators=(',',':'),ensure_ascii=False).encode('utf-8')
@@ -157,6 +158,6 @@ for name,direction in views.items():
     path=os.path.join(out_dir,name+'.png'); scene.render.filepath=path; bpy.ops.render.render(write_still=True)
     if not os.path.isfile(path) or os.path.getsize(path)<10000: raise RuntimeError('Missing render '+path)
     print('HAIR_SWAP_RENDER_OK',name,os.path.getsize(path),flush=True)
-report={'blender':bpy.app.version_string,'scale':scale,'source_face_bounds':[list(slo),list(shi)],'target_face_bounds':[list(tlo),list(thi)],'hair_objects':len(check_hair),'total_meshes':len(check_meshes),'roundtrip':'passed','renders':'3 passed'}
+report={'blender':bpy.app.version_string,'scale':scale,'depth_scale':depth_scale,'source_face_bounds':[list(slo),list(shi)],'target_face_bounds':[list(tlo),list(thi)],'hair_objects':len(check_hair),'total_meshes':len(check_meshes),'roundtrip':'passed','renders':'3 passed'}
 with open(os.path.join(out_dir,'hair-swap-report.json'),'w') as f: json.dump(report,f,indent=2)
 print('HAIR_SWAP_OK',json.dumps(report),flush=True)
