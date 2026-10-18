@@ -61,11 +61,13 @@ for obj in hair_meshes:
         metallic=principled.inputs.get('Metallic')
         if metallic: metallic.default_value=0.0
         spec=principled.inputs.get('Specular IOR Level')
-        if spec: spec.default_value=0.38
+        if spec: spec.default_value=0.22
+        ior=principled.inputs.get('IOR')
+        if ior: ior.default_value=1.45
         coat=principled.inputs.get('Coat Weight')
-        if coat: coat.default_value=0.18
+        if coat: coat.default_value=0.10
         coat_rough=principled.inputs.get('Coat Roughness')
-        if coat_rough: coat_rough.default_value=0.24
+        if coat_rough: coat_rough.default_value=0.28
         base=principled.inputs.get('Base Color')
         if base:
             image_nodes=[n for n in nodes if n.type=='TEX_IMAGE' and n.image is not None]
@@ -93,6 +95,33 @@ for obj in model_meshes: obj.select_set(True)
 bpy.context.view_layer.objects.active=face
 model_path=os.path.join(out_dir,'head_chestnut_hair.glb')
 bpy.ops.export_scene.gltf(filepath=model_path,export_format='GLB',use_selection=True,export_apply=True,export_yup=True)
+
+# glTF's Blender exporter omits arbitrary MixRGB tint nodes from baseColorFactor.
+# Patch each hair material factor in the GLB so the chestnut tint survives in viewers.
+import struct
+with open(model_path,'rb') as f: glb=f.read()
+magic,total=struct.unpack_from('<4sI',glb,0)
+if magic != b'glTF': raise RuntimeError('Unexpected GLB header')
+json_len,json_type=struct.unpack_from('<I4s',glb,12)
+if json_type != b'JSON': raise RuntimeError('GLB has no leading JSON chunk')
+doc=json.loads(glb[20:20+json_len].decode('utf-8').rstrip(' \t\r\n\0'))
+for material in doc.get('materials',[]):
+    if material.get('name','').lower().startswith('warm chestnut'):
+        pbr=material.setdefault('pbrMetallicRoughness',{})
+        pbr['baseColorFactor']=[0.30,0.12,0.055,1.0]
+        pbr['metallicFactor']=0.0
+        pbr['roughnessFactor']=0.34
+        ext=material.setdefault('extensions',{})
+        if 'KHR_materials_ior' in ext: ext['KHR_materials_ior']['ior']=1.45
+        if 'KHR_materials_specular' in ext:
+            ext['KHR_materials_specular']['specularFactor']=0.24
+            ext['KHR_materials_specular'].pop('specularColorFactor',None)
+doc['extensionsUsed']=[x for x in doc.get('extensionsUsed',[]) if x not in ('KHR_materials_ior','KHR_materials_specular') or any(x in m.get('extensions',{}) for m in doc.get('materials',[]))]
+json_chunk=json.dumps(doc,separators=(',',':'),ensure_ascii=False).encode('utf-8')
+json_chunk+=b' '*((-len(json_chunk))%4)
+rest=glb[20+json_len:]
+patched=b'glTF'+struct.pack('<II',2,12+len(json_chunk)+len(rest))+struct.pack('<I4s',len(json_chunk),b'JSON')+json_chunk+rest
+with open(model_path,'wb') as f: f.write(patched)
 
 # Re-import the exported GLB in a clean file to validate the deliverable.
 bpy.ops.wm.read_factory_settings(use_empty=True)
