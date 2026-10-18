@@ -98,7 +98,7 @@ bpy.ops.export_scene.gltf(filepath=model_path,export_format='GLB',use_selection=
 bpy.ops.wm.read_factory_settings(use_empty=True)
 bpy.ops.import_scene.gltf(filepath=model_path)
 check_meshes=[o for o in bpy.context.scene.objects if o.type=='MESH']
-check_hair=[o for o in check_meshes if 'chestnut hair' in o.name.lower() or 'hair' in o.name.lower()]
+check_hair=[o for o in check_meshes if o.name.lower().startswith('chestnut hair')]
 if len(check_meshes) < 5 or len(check_hair) != 4:
     raise RuntimeError('GLB round-trip failed: meshes=%s hair=%s' % ([o.name for o in check_meshes],[o.name for o in check_hair]))
 
