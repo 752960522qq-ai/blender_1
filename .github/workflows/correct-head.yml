@@ -1,0 +1,48 @@
+name: Correct Head in Blender
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/correct-head.yml'
+      - 'correct_head.py'
+      - 'models/head-input.glb'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: correct-head
+  cancel-in-progress: false
+jobs:
+  correct:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download verified Blender 4.5.14
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 2 --silent --show-error \
+            https://download.blender.org/release/Blender4.5/blender-4.5.14-linux-x64.tar.xz \
+            --output blender.tar.xz
+          echo '9ba871ff2ecd36526b77432745980b7e6664ecd0c7ca11c48849073dcfe06da3  blender.tar.xz' | sha256sum --check
+          tar -xJf blender.tar.xz
+          echo "$GITHUB_WORKSPACE/blender-4.5.14-linux-x64" >> "$GITHUB_PATH"
+      - name: Correct geometry and verify GLB round trip without rendering
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p correction-output
+          blender -b --factory-startup --python-exit-code 1 --python correct_head.py -- \
+            models/head-input.glb correction-output \
+            2>&1 | tee correction-output/blender-correction.log
+          test -s correction-output/head_corrected.glb
+          test -s correction-output/correction-report.json
+      - name: Upload model and execution evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: head-correction
+          path: correction-output/
+          if-no-files-found: error
+          retention-days: 3
