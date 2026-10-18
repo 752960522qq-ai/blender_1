@@ -80,9 +80,9 @@ for obj in hair_meshes:
         mat.name='Warm chestnut | soft satin gloss'
 
 # Remove the source-model head anchor and imported hierarchy empties; keep only the target head and fitted hair.
-bpy.data.objects.remove(anchor, do_unlink=True)
 for obj in source_objects:
-    if obj.type != 'MESH': bpy.data.objects.remove(obj, do_unlink=True)
+    if obj != anchor and obj.type != 'MESH': bpy.data.objects.remove(obj, do_unlink=True)
+bpy.data.objects.remove(anchor, do_unlink=True)
 
 # Save editable project and export only model geometry/materials.
 blend_path=os.path.join(out_dir,'head_chestnut_hair.blend')
