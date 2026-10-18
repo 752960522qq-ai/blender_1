@@ -1,0 +1,53 @@
+name: Blender Linux Runtime Test
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/blender-linux-test.yml'
+      - 'test_blender.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  blender-smoke-test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download and verify Blender 4.5.14
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="https://download.blender.org/release/Blender4.5/blender-4.5.14-linux-x64.tar.xz"
+          curl --fail --location --retry 3 "$url" --output blender.tar.xz
+          echo "9ba871ff2ecd36526b77432745980b7e6664ecd0c7ca11c48849073dcfe06da3  blender.tar.xz" | sha256sum --check
+          tar -xJf blender.tar.xz
+          echo "$GITHUB_WORKSPACE/blender-4.5.14-linux-x64" >> "$GITHUB_PATH"
+
+      - name: Record runner and Blender version
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 -c 'print("Python runner check: hello")'
+          blender --version | tee blender-version.txt
+
+      - name: Run Cycles render and GLB round trip
+        shell: bash
+        run: |
+          set -o pipefail
+          blender -b --factory-startup --python test_blender.py 2>&1 | tee blender-test.log
+
+      - name: Upload test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: blender-linux-test-results
+          path: |
+            blender-version.txt
+            blender-test.log
+            render.png
+            roundtrip.glb
+          if-no-files-found: warn
