@@ -213,6 +213,33 @@ if len(check_meshes) < 5 or len(check_hair) != 4:
 
 # Save the final imported GLB material state into the editable project as well.
 bpy.ops.wm.save_as_mainfile(filepath=blend_path)
-report={'blender':bpy.app.version_string,'hair_objects':len(check_hair),'total_meshes':len(check_meshes),'roundtrip':'passed','renders':'disabled','clearance_mm':clearance*1000,'fit':fit_report}
+
+# Render only the requested three views from the validated fitted model.
+scene=bpy.context.scene
+bpy.context.view_layer.update()
+points=[o.matrix_world@v.co for o in check_meshes for v in o.data.vertices]
+lo=Vector(tuple(min(v[i] for v in points) for i in range(3)))
+hi=Vector(tuple(max(v[i] for v in points) for i in range(3)))
+center=(lo+hi)*0.5; size=hi-lo; scene_scale=max(size)
+world=bpy.data.worlds.new('Soft warm studio'); world.use_nodes=True
+world.node_tree.nodes['Background'].inputs['Color'].default_value=(0.31,0.29,0.28,1)
+world.node_tree.nodes['Background'].inputs['Strength'].default_value=0.22; scene.world=world
+def area(name,offset,energy,diameter):
+    bpy.ops.object.light_add(type='AREA',location=center+Vector(offset)*scene_scale)
+    light=bpy.context.object; light.name=name; light.data.energy=energy; light.data.shape='DISK'; light.data.size=diameter*scene_scale
+    light.rotation_euler=(center-light.location).to_track_quat('-Z','Y').to_euler()
+area('Key softbox',(-1.8,-2.8,1.8),42,1.4); area('Front fill',(1.5,-2.0,0.35),11,1.8); area('Rim',(.4,1.6,1.5),30,1.3)
+bpy.ops.object.camera_add(); camera=bpy.context.object; camera.data.type='ORTHO'; camera.data.ortho_scale=scene_scale*1.24; scene.camera=camera
+scene.render.engine='CYCLES'; scene.cycles.samples=24; scene.cycles.use_denoising=True
+scene.render.resolution_x=640; scene.render.resolution_y=800; scene.render.resolution_percentage=100
+scene.render.image_settings.file_format='PNG'; scene.render.image_settings.color_mode='RGBA'
+scene.view_settings.view_transform='AgX'; scene.view_settings.look='AgX - Medium High Contrast'; scene.view_settings.exposure=-0.25
+views={'head_front':Vector((0,-1,0.035)),'head_45_degree':Vector((0.707,-0.707,0.04)),'head_profile':Vector((1,0,0.04))}
+for name,direction in views.items():
+    direction.normalize(); camera.location=center+direction*scene_scale*3.4; camera.rotation_euler=(center-camera.location).to_track_quat('-Z','Y').to_euler()
+    path=os.path.join(out_dir,name+'.png'); scene.render.filepath=path; bpy.ops.render.render(write_still=True)
+    if not os.path.isfile(path) or os.path.getsize(path)<10000: raise RuntimeError('Missing render '+path)
+    print('HAIR_RENDER_OK',name,os.path.getsize(path),flush=True)
+report={'blender':bpy.app.version_string,'hair_objects':len(check_hair),'total_meshes':len(check_meshes),'roundtrip':'passed','renders':'3 passed','clearance_mm':clearance*1000,'fit':fit_report}
 with open(os.path.join(out_dir,'hair-swap-report.json'),'w') as f: json.dump(report,f,indent=2)
 print('HAIR_FIT_OK',json.dumps(report),flush=True)
