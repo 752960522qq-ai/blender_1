@@ -9,6 +9,7 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+  actions: read
 concurrency:
   group: correct-head
   cancel-in-progress: false
@@ -18,6 +19,13 @@ jobs:
     timeout-minutes: 12
     steps:
       - uses: actions/checkout@v4
+      - name: Reuse the verified previous model
+        uses: actions/download-artifact@v4
+        with:
+          name: head-correction
+          path: prior-output
+          run-id: 39135691537
+          github-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Download verified Blender 4.5.14
         shell: bash
         run: |
@@ -34,7 +42,7 @@ jobs:
           set -euo pipefail
           mkdir -p correction-output
           blender -b --factory-startup --python-exit-code 1 --python correct_head.py -- \
-            models/head-input.glb correction-output \
+            prior-output/head_corrected.glb correction-output \
             2>&1 | tee correction-output/blender-correction.log
           test -s correction-output/head_corrected.glb
           test -s correction-output/correction-report.json
@@ -42,7 +50,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: head-correction
+          name: head-final-correction
           path: correction-output/
           if-no-files-found: error
           retention-days: 3

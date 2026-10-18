@@ -1,4 +1,4 @@
-"""Small reference-guided nose/eyelid correction. No cameras or rendering."""
+"""Final localized nasal, philtrum and jawline correction. No cameras or rendering."""
 import bpy
 import hashlib
 import json
@@ -7,7 +7,7 @@ import sys
 import numpy as np
 from mathutils.kdtree import KDTree
 
-SOURCE_SHA256 = '030fbd8f8b1b3bbe21cdfddf2405c8046699832169f83407cf2b46cc0a39b9bc'
+SOURCE_SHA256 = '833d0884fd08b641b241fb45857388d80dd856f421ad8a87c9e5a2083983f8a8'
 
 def smoothstep(a, b, t):
     u = np.clip((t-a)/(b-a), 0, 1)
@@ -18,34 +18,23 @@ def bump(x, y, cx, cy, sx, sy):
     return np.exp(-.5*r2)*(1-smoothstep(6.25, 9, r2))
 
 def deform(p):
-    # Metres, canonical glTF axes: horizontal X, up Y, face forward +Z.
-    x, y, z = p.T
-    dx = np.zeros(len(p)); dy = dx.copy(); dz = dx.copy()
-    mid = -.0015
-    nasal = smoothstep(.122, .132, z)*(1-smoothstep(-.028, -.023, y))
-    tip = bump(x,y,mid,-.0375,.009,.0075)*nasal
-    # Expand the lobule across and vertically, without lengthening the bridge.
-    dx += .10*(x-mid)*tip
-    dy += .11*(y+.0375)*tip
-    dz += .00018*tip
-    for sign in (-1, 1):
-        wing = bump(x,y,mid+sign*.013,-.043,.0055,.0055)*nasal
-        dx += sign*.00060*wing
-        dz += .00035*wing
-    # Ease the strongly lifted outer eye corners; move attached lashes with lids.
-    for cx, sign in ((-.0265,-1),(.0235,1)):
-        outer = bump(x,y,cx+sign*.012,.0045,.0055,.006)*smoothstep(.092,.104,z)
-        dy -= .00042*outer
-    # Restrained cheek, chin and lip transitions from the supplied references.
-    for sign in (-1,1):
-        cheek = bump(x,y,mid+sign*.037,-.037,.013,.015)*smoothstep(.083,.105,z)
-        dz += .00030*cheek
-    chin = bump(x,y,mid,-.101,.020,.007)*smoothstep(.078,.103,z)
-    dy += .00035*chin
-    dz += .00020*bump(x,y,mid,-.089,.015,.010)*smoothstep(.095,.109,z)
-    lower = bump(x,y,mid,-.067,.012,.0038)*smoothstep(.119,.125,z)
-    dy -= .00018*lower
-    dz += .00020*lower
+    # glTF axes: X left/right, Y up, Z forward, metres.
+    x,y,z=p.T
+    mid=-.0015
+    dx=np.zeros(len(p));dy=dx.copy();dz=dx.copy()
+    nasal=smoothstep(.119,.131,z)*(1-smoothstep(-.028,-.023,y))
+    tip=bump(x,y,mid,-.0375,.0095,.0075)*nasal
+    # Retract the lobule, give it a slight downward inclination, round shoulders.
+    dx+=.035*(x-mid)*tip
+    dy-=.00075*tip
+    dz-=.00155*tip
+    # Blend back to the alar base without reducing nostril apertures abruptly.
+    base=bump(x,y,mid,-.047,.011,.005)*smoothstep(.112,.124,z)
+    base*=smoothstep(-.057,-.053,y)
+    dz-=.00055*base
+    philtrum=bump(x,y,mid,-.0515,.0065,.0038)*smoothstep(.114,.122,z)
+    philtrum*=smoothstep(-.057,-.054,y)
+    dz-=.00065*philtrum
     return p+np.column_stack((dx,dy,dz))
 
 def normalized(n):
@@ -57,7 +46,7 @@ def surface_normals(p, tris):
     for k in range(3): np.add.at(n,tris[:,k],f)
     return normalized(n)
 
-def smooth_eyelids(p, tris):
+def smooth_jawline(p, tris):
     # Work on shared position groups so the UV seam remains closed.
     key, inv = np.unique(np.round(p,7),axis=0,return_inverse=True)
     n = len(key)
@@ -71,26 +60,26 @@ def smooth_eyelids(p, tris):
     for i, v in enumerate(boundary): kd.insert(tuple(u[v]),i)
     kd.balance()
     x,y,z = u.T
-    w = np.zeros(n)
-    for cx in (-.0275,.0245):
-        upper = bump(x,y,cx,.008,.0115,.004)
-        lower = .45*bump(x,y,cx,-.004,.013,.0035)
-        w = np.maximum(w,np.maximum(upper,lower))
-    w *= smoothstep(.104,.110,z)*(1-smoothstep(.017,.024,y))*smoothstep(-.017,-.010,y)
-    w *= smoothstep(.010,.017,np.abs(x+.0015))
+    jaw_height=-.045-.55*z
+    distance_from_band=y-jaw_height
+    w=np.exp(-.5*(distance_from_band/.013)**2)
+    w*=1-smoothstep(.028,.038,np.abs(distance_from_band))
+    w*=smoothstep(.017,.032,np.abs(x+.0015))
+    w*=smoothstep(-.005,.015,z)*(1-smoothstep(.09,.112,z))
+    w*=1-smoothstep(-.046,-.035,y)
     ids = np.flatnonzero(w>0)
     distance = np.array([kd.find(tuple(u[i]))[2] for i in ids])
     w[ids] *= smoothstep(.001,.004,distance)
     a,b = edges.T
     degree = np.bincount(edges.ravel(),minlength=n)
     q = u.copy()
-    for _ in range(20):
+    for _ in range(60):
         sums = np.zeros_like(q)
         np.add.at(sums,a,q[b]); np.add.at(sums,b,q[a])
         q += .35*w[:,None]*(sums/np.maximum(degree[:,None],1)-q)
     delta = q-u
     length = np.linalg.norm(delta,axis=1)
-    delta *= np.minimum(1,.00045/np.maximum(length,1e-20))[:,None]
+    delta *= np.minimum(1,.00080/np.maximum(length,1e-20))[:,None]
     q = u+delta
     n0 = surface_normals(u,ti); n1 = surface_normals(q,ti)
     # Track geometric normal rotations without removing the original smooth normals.
@@ -105,7 +94,12 @@ def smooth_eyelids(p, tris):
             'vertices_smoothed_over_0_01mm':int(np.sum(local_change>1e-5)),
             'weighted_laplacian_before_mm':float(np.sum(w*lap0)/w.sum()*1000),
             'weighted_laplacian_after_mm':float(np.sum(w*lap1)/w.sum()*1000)}
-    return p+delta[inv], axis[inv], cosine[inv], stat
+    target=n1.copy()
+    for _ in range(3):
+        sums=np.zeros_like(target)
+        np.add.at(sums,a,target[b]);np.add.at(sums,b,target[a])
+        target=normalized(.5*target+.5*sums/np.maximum(degree[:,None],1))
+    return p+delta[inv], axis[inv], cosine[inv], target[inv], .85*w[inv], stat
 
 def canonical(ob):
     mesh = ob.data
@@ -147,9 +141,11 @@ for ob in objects:
     base = p.copy()
     rec = {'name':ob.name,'triangles':len(tris)}
     if 'Face_Mat' in ob.name:
-        base,axis,cosine,rec['eyelid_smoothing'] = smooth_eyelids(p,tris)
+        base,axis,cosine,jaw_normals,jaw_normal_weight,rec['jawline_smoothing'] = smooth_jawline(p,tris)
         v = axis[loop_v];c = cosine[loop_v,None]
         gltf_n += np.cross(v,gltf_n)+np.cross(v,np.cross(v,gltf_n))/np.maximum(1+c,1e-12)
+        weight=jaw_normal_weight[loop_v,None]
+        gltf_n=normalized(gltf_n*(1-weight)+jaw_normals[loop_v]*weight)
     after = deform(base)
     J = np.empty((len(p),3,3));eps=1e-5
     for axis_i in range(3):
@@ -179,6 +175,13 @@ for ob in objects:
         nose=(abs(p[:,0]+.0015)<.025)&(p[:,1]<-.025)&(p[:,1]>-.055)&(p[:,2]>.12)
         rec['nose_max_displacement_mm']=float(dist[nose].max()*1000)
         assert rec['upper_nasal_bridge_max_change_mm']<.025
+        region=(abs(p[:,0]+.0015)<.011)&(p[:,1]>-.045)&(p[:,1]<-.030)&(p[:,2]>.135)
+        rec['tip_average_shift_mm']=((after[region]-p[region]).mean(axis=0)*1000).tolist()
+        phil=(abs(p[:,0]+.0015)<.006)&(p[:,1]>-.055)&(p[:,1]<-.048)&(p[:,2]>.117)
+        rec['philtrum_average_retraction_mm']=float((p[phil,2]-after[phil,2]).mean()*1000)
+        eyes=(abs(p[:,0]+.0015)>.012)&(p[:,1]>-.018)&(p[:,1]<.024)
+        rec['eye_region_max_change_mm']=float(dist[eyes].max()*1000)
+        assert rec['eye_region_max_change_mm']<1e-8
     report['objects'].append(rec)
     print('CORRECTION_METRIC',json.dumps(rec),flush=True)
 
