@@ -95,18 +95,22 @@ face.data.calc_loop_triangles()
 head_points=[face.matrix_world @ v.co for v in face.data.vertices]
 head_tris=[tuple(t.vertices) for t in face.data.loop_triangles]
 head_bvh=BVHTree.FromPolygons(head_points,head_tris,all_triangles=True)
-head_digest=hashlib.sha256(b''.join(struct.pack('<3f',*p) for p in head_points)).hexdigest() if False else None
 clearance=0.0018
 zfloor=tlo.z+0.002
 
 def correction(p):
-    if p.z < zfloor: return Vector((0,0,0))
-    loc,n,idx,d=head_bvh.find_nearest(p)
-    if loc is None or d > 0.045: return Vector((0,0,0))
-    signed=(p-loc).dot(n)
-    if signed < clearance:
-        return n*(clearance-signed)
-    return Vector((0,0,0))
+    if p.z < tlo.z or p.z > thi.z: return Vector((0,0,0))
+    center=Vector((tc.x,tc.y,p.z))
+    direction=p-center
+    radius=direction.length
+    if radius<1e-8: return Vector((0,0,0))
+    direction/=radius
+    loc,n,idx,d=head_bvh.ray_cast(center+direction*0.6,-direction,1.2)
+    if loc is None: return Vector((0,0,0))
+    surface_radius=(loc-center).dot(direction)
+    if surface_radius<=0: return Vector((0,0,0))
+    needed=surface_radius+clearance-radius
+    return direction*max(0.0,needed)
 
 def collision_stats(obj):
     mesh=obj.data; mesh.calc_loop_triangles()
@@ -126,7 +130,7 @@ for obj in hair_meshes:
     bm=bmesh.new(); bm.from_mesh(obj.data)
     bmesh.ops.triangulate(bm,faces=list(bm.faces))
     # Add only the resolution needed for local clearance around the head.
-    for _ in range(3):
+    for _ in range(2):
         edges=[e for e in bm.edges if e.calc_length()>0.004 and any(v.co.z>zfloor and head_bvh.find_nearest(v.co)[3]<0.04 for v in e.verts)]
         if not edges: break
         bmesh.ops.subdivide_edges(bm,edges=edges,cuts=1,use_grid_fill=True)
@@ -139,7 +143,7 @@ for obj in hair_meshes:
     neighbors=[set() for p in pts]
     for a,b,c in tris:
         neighbors[a].update((b,c)); neighbors[b].update((a,c)); neighbors[c].update((a,b))
-    for iteration in range(18):
+    for iteration in range(22):
         for i,p in enumerate(pts): pts[i]=p+correction(p)
         shifts=[Vector((0,0,0)) for p in pts]
         for a,b,c in tris:
