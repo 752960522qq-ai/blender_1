@@ -87,6 +87,78 @@ for obj in source_objects:
     if obj != anchor and obj.type != 'MESH': bpy.data.objects.remove(obj, do_unlink=True)
 bpy.data.objects.remove(anchor, do_unlink=True)
 
+# Correct local strand/head collisions while keeping the face mesh unchanged.
+import bmesh, hashlib
+from mathutils.bvhtree import BVHTree
+bpy.context.view_layer.update()
+face.data.calc_loop_triangles()
+head_points=[face.matrix_world @ v.co for v in face.data.vertices]
+head_tris=[tuple(t.vertices) for t in face.data.loop_triangles]
+head_bvh=BVHTree.FromPolygons(head_points,head_tris,all_triangles=True)
+head_digest=hashlib.sha256(b''.join(struct.pack('<3f',*p) for p in head_points)).hexdigest() if False else None
+clearance=0.0018
+zfloor=tlo.z+0.002
+
+def correction(p):
+    if p.z < zfloor: return Vector((0,0,0))
+    loc,n,idx,d=head_bvh.find_nearest(p)
+    if loc is None or d > 0.045: return Vector((0,0,0))
+    signed=(p-loc).dot(n)
+    if signed < clearance:
+        return n*(clearance-signed)
+    return Vector((0,0,0))
+
+def collision_stats(obj):
+    mesh=obj.data; mesh.calc_loop_triangles()
+    pts=[v.co.copy() for v in mesh.vertices]
+    tris=[tuple(t.vertices) for t in mesh.loop_triangles]
+    overlap=len(BVHTree.FromPolygons(pts,tris,all_triangles=True).overlap(head_bvh))
+    inside=0
+    for p in pts:
+        if p.z < zfloor: continue
+        loc,n,idx,d=head_bvh.find_nearest(p)
+        if loc is not None and d<0.045 and (p-loc).dot(n)<-0.00005: inside+=1
+    return {'vertices':len(pts),'inside_vertices':inside,'triangle_intersection_pairs':overlap}
+
+fit_report=[]
+for obj in hair_meshes:
+    before=collision_stats(obj)
+    bm=bmesh.new(); bm.from_mesh(obj.data)
+    bmesh.ops.triangulate(bm,faces=list(bm.faces))
+    # Add only the resolution needed for local clearance around the head.
+    for _ in range(3):
+        edges=[e for e in bm.edges if e.calc_length()>0.004 and any(v.co.z>zfloor and head_bvh.find_nearest(v.co)[3]<0.04 for v in e.verts)]
+        if not edges: break
+        bmesh.ops.subdivide_edges(bm,edges=edges,cuts=1,use_grid_fill=True)
+    bmesh.ops.triangulate(bm,faces=list(bm.faces))
+    bm.to_mesh(obj.data); bm.free(); obj.data.update()
+    obj.data.calc_loop_triangles()
+    tris=[tuple(t.vertices) for t in obj.data.loop_triangles]
+    pts=[v.co.copy() for v in obj.data.vertices]
+    original=[p.copy() for p in pts]
+    neighbors=[set() for p in pts]
+    for a,b,c in tris:
+        neighbors[a].update((b,c)); neighbors[b].update((a,c)); neighbors[c].update((a,b))
+    for iteration in range(18):
+        for i,p in enumerate(pts): pts[i]=p+correction(p)
+        shifts=[Vector((0,0,0)) for p in pts]
+        for a,b,c in tris:
+            samples=[(pts[a]+pts[b])*0.5,(pts[b]+pts[c])*0.5,(pts[c]+pts[a])*0.5,(pts[a]+pts[b]+pts[c])/3]
+            delta=max((correction(p) for p in samples),key=lambda v:v.length_squared)
+            if delta.length_squared>1e-14:
+                for k in (a,b,c):
+                    if delta.length_squared>shifts[k].length_squared: shifts[k]=delta
+        pts=[p+d for p,d in zip(pts,shifts)]
+        # Smooth the deformation field, not the original textured strand shape.
+        if iteration<10:
+            disp=[p-o for p,o in zip(pts,original)]
+            pts=[original[i]+disp[i]*0.75+sum((disp[k] for k in nb),Vector())*(0.25/len(nb)) if nb else pts[i] for i,nb in enumerate(neighbors)]
+    for i,p in enumerate(pts): obj.data.vertices[i].co=p+correction(p)
+    obj.data.update()
+    after=collision_stats(obj)
+    fit_report.append({'object':obj.name,'before':before,'after':after,'max_local_move_mm':max((v.co-o).length for v,o in zip(obj.data.vertices,original))*1000})
+    print('FIT_OBJECT',json.dumps(fit_report[-1]),flush=True)
+
 # Save editable project and export only model geometry/materials.
 blend_path=os.path.join(out_dir,'head_chestnut_hair.blend')
 bpy.ops.wm.save_as_mainfile(filepath=blend_path)
@@ -132,32 +204,8 @@ check_hair=[o for o in check_meshes if o.name.lower().startswith('chestnut hair'
 if len(check_meshes) < 5 or len(check_hair) != 4:
     raise RuntimeError('GLB round-trip failed: meshes=%s hair=%s' % ([o.name for o in check_meshes],[o.name for o in check_hair]))
 
-# Build three restrained studio views with the muted exposure used in prior previews.
-scene=bpy.context.scene
-bpy.context.view_layer.update()
-points=[o.matrix_world@v.co for o in check_meshes for v in o.data.vertices]
-lo=Vector(tuple(min(v[i] for v in points) for i in range(3))); hi=Vector(tuple(max(v[i] for v in points) for i in range(3)))
-center=(lo+hi)*0.5; size=hi-lo; scale_scene=max(size)
-world=bpy.data.worlds.new('Soft warm studio'); world.use_nodes=True
-world.node_tree.nodes['Background'].inputs['Color'].default_value=(0.31,0.29,0.28,1)
-world.node_tree.nodes['Background'].inputs['Strength'].default_value=0.22; scene.world=world
-
-def area(name,offset,energy,diameter):
-    bpy.ops.object.light_add(type='AREA',location=center+Vector(offset)*scale_scene)
-    light=bpy.context.object; light.name=name; light.data.energy=energy; light.data.shape='DISK'; light.data.size=diameter*scale_scene
-    light.rotation_euler=(center-light.location).to_track_quat('-Z','Y').to_euler()
-area('Key softbox',(-1.8,-2.8,1.8),42,1.4); area('Front fill',(1.5,-2.0,0.35),11,1.8); area('Rim',(.4,1.6,1.5),30,1.3)
-bpy.ops.object.camera_add(); camera=bpy.context.object; camera.data.type='ORTHO'; camera.data.ortho_scale=scale_scene*1.24; scene.camera=camera
-scene.render.engine='CYCLES'; scene.cycles.samples=24; scene.cycles.use_denoising=True
-scene.render.resolution_x=640; scene.render.resolution_y=800; scene.render.resolution_percentage=100
-scene.render.image_settings.file_format='PNG'; scene.render.image_settings.color_mode='RGBA'
-scene.view_settings.view_transform='AgX'; scene.view_settings.look='AgX - Medium High Contrast'; scene.view_settings.exposure=-0.25
-views={'head_front':Vector((0,-1,0.035)),'head_45_degree':Vector((0.707,-0.707,0.04)),'head_profile':Vector((1,0,0.04))}
-for name,direction in views.items():
-    direction.normalize(); camera.location=center+direction*scale_scene*3.4; camera.rotation_euler=(center-camera.location).to_track_quat('-Z','Y').to_euler()
-    path=os.path.join(out_dir,name+'.png'); scene.render.filepath=path; bpy.ops.render.render(write_still=True)
-    if not os.path.isfile(path) or os.path.getsize(path)<10000: raise RuntimeError('Missing render '+path)
-    print('HAIR_SWAP_RENDER_OK',name,os.path.getsize(path),flush=True)
-report={'blender':bpy.app.version_string,'scale':scale,'depth_scale':depth_scale,'source_face_bounds':[list(slo),list(shi)],'target_face_bounds':[list(tlo),list(thi)],'hair_objects':len(check_hair),'total_meshes':len(check_meshes),'roundtrip':'passed','renders':'3 passed'}
+# Save the final imported GLB material state into the editable project as well.
+bpy.ops.wm.save_as_mainfile(filepath=blend_path)
+report={'blender':bpy.app.version_string,'hair_objects':len(check_hair),'total_meshes':len(check_meshes),'roundtrip':'passed','renders':'disabled','clearance_mm':clearance*1000,'fit':fit_report}
 with open(os.path.join(out_dir,'hair-swap-report.json'),'w') as f: json.dump(report,f,indent=2)
-print('HAIR_SWAP_OK',json.dumps(report),flush=True)
+print('HAIR_FIT_OK',json.dumps(report),flush=True)

@@ -26,7 +26,7 @@ jobs:
           echo '9ba871ff2ecd36526b77432745980b7e6664ecd0c7ca11c48849073dcfe06da3  blender.tar.xz' | sha256sum --check
           tar -xJf blender.tar.xz
           echo "$GITHUB_WORKSPACE/blender-4.5.14-linux-x64" >> "$GITHUB_PATH"
-      - name: Fit hair, export GLB, and render three views
+      - name: Fit hair clearance and validate GLB without rendering
         shell: bash
         run: |
           set -euo pipefail
@@ -38,11 +38,15 @@ jobs:
           test -s hair-output/head_chestnut_hair.glb
           test -s hair-output/head_chestnut_hair.blend
           test -s hair-output/hair-swap-report.json
-      - name: Upload model and render evidence
+      - name: Upload fitted model and validation report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: head-chestnut-hair
-          path: hair-output/
+          path: |
+            hair-output/head_chestnut_hair.glb
+            hair-output/head_chestnut_hair.blend
+            hair-output/hair-swap-report.json
+            hair-output/blender-hair-swap.log
           if-no-files-found: error
           retention-days: 3
