@@ -30,17 +30,19 @@ jobs:
           echo '9ba871ff2ecd36526b77432745980b7e6664ecd0c7ca11c48849073dcfe06da3  blender.tar.xz' | sha256sum --check
           tar -xJf blender.tar.xz
           echo "$GITHUB_WORKSPACE/blender-4.5.14-linux-x64" >> "$GITHUB_PATH"
-      - name: Render one three-quarter portrait
+      - name: Render front, 45 degree, and profile portraits
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p render-output
-          blender -b --factory-startup --python-exit-code 1 --python render_head.py -- source-model/head_corrected.blend render-output/head_three_quarter.png 2>&1 | tee render-output/blender-render.log
-          test -s render-output/head_three_quarter.png
+          blender -b --factory-startup --python-exit-code 1 --python render_head.py -- source-model/head_corrected.blend render-output 2>&1 | tee render-output/blender-render.log
+          test -s render-output/head_front.png
+          test -s render-output/head_45_degree.png
+          test -s render-output/head_profile.png
       - name: Upload render
         uses: actions/upload-artifact@v4
         with:
-          name: final-head-render
+          name: final-head-views
           path: render-output/
           if-no-files-found: error
-          retention-days: 3
+          retention-days: 7
