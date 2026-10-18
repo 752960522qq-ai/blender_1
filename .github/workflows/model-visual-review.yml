@@ -1,0 +1,86 @@
+name: Blender Model Visual Review
+
+on:
+  workflow_dispatch:
+    inputs:
+      model_path:
+        description: "Path to a .blend or .glb already in this repository. This repository is public, so committed models and review screenshots are public."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  review:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate model path
+        shell: bash
+        env:
+          MODEL_PATH: ${{ inputs.model_path }}
+        run: |
+          set -euo pipefail
+          case "$MODEL_PATH" in
+            /*|*..*) echo "Use a repository-relative path without '..'"; exit 1 ;;
+          esac
+          case "$MODEL_PATH" in
+            *.blend|*.glb|*.gltf) ;;
+            *) echo "Model must be a .blend, .glb, or .gltf file"; exit 1 ;;
+          esac
+          test -f "$GITHUB_WORKSPACE/$MODEL_PATH" || {
+            echo "No file at repository path: $MODEL_PATH"
+            exit 1
+          }
+
+      - name: Install Blender GUI screenshot tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb imagemagick
+
+      - name: Download and verify Blender 4.5.14
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="https://download.blender.org/release/Blender4.5/blender-4.5.14-linux-x64.tar.xz"
+          curl --fail --location --retry 3 "$url" --output blender.tar.xz
+          echo "9ba871ff2ecd36526b77432745980b7e6664ecd0c7ca11c48849073dcfe06da3  blender.tar.xz" | sha256sum --check
+          tar -xJf blender.tar.xz
+          echo "$GITHUB_WORKSPACE/blender-4.5.14-linux-x64" >> "$GITHUB_PATH"
+
+      - name: Render three review views and prepare fitted Blender viewport
+        shell: bash
+        env:
+          MODEL_PATH: ${{ inputs.model_path }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$GITHUB_WORKSPACE/review-output"
+          blender -b --python "$GITHUB_WORKSPACE/review_model.py" -- \
+            "$GITHUB_WORKSPACE/$MODEL_PATH" "$GITHUB_WORKSPACE/review-output" \
+            2>&1 | tee "$GITHUB_WORKSPACE/review-output/blender-review.log"
+
+      - name: Capture Blender interface
+        shell: bash
+        run: |
+          set -euo pipefail
+          xvfb-run -a -s "-screen 0 1600x1000x24" bash -euc '
+            blender -W "$GITHUB_WORKSPACE/review-output/viewport-review.blend" \
+              >"$GITHUB_WORKSPACE/review-output/blender-gui.log" 2>&1 &
+            blender_pid=$!
+            sleep 30
+            import -window root "$GITHUB_WORKSPACE/review-output/blender-interface.png"
+            kill "$blender_pid" || true
+            wait "$blender_pid" || true
+          '
+          test -s "$GITHUB_WORKSPACE/review-output/blender-interface.png"
+
+      - name: Upload visual review
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: blender-model-visual-review
+          path: review-output/
+          if-no-files-found: warn
