@@ -1,0 +1,48 @@
+name: Fit Chestnut Hair to Latest Head
+on:
+  push:
+    branches: ["codex/hair-swap-*"]
+    paths:
+      - 'models/hair-swap/**'
+      - '.github/workflows/hair-swap.yml'
+      - 'hair_swap.py'
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: chestnut-hair-swap
+  cancel-in-progress: false
+jobs:
+  fit-and-render:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download Blender 4.5.14
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 2 --silent --show-error https://download.blender.org/release/Blender4.5/blender-4.5.14-linux-x64.tar.xz --output blender.tar.xz
+          echo '9ba871ff2ecd36526b77432745980b7e6664ecd0c7ca11c48849073dcfe06da3  blender.tar.xz' | sha256sum --check
+          tar -xJf blender.tar.xz
+          echo "$GITHUB_WORKSPACE/blender-4.5.14-linux-x64" >> "$GITHUB_PATH"
+      - name: Fit hair, export GLB, and render three views
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p hair-output
+          gzip -dc models/hair-swap/hair_anchor.glb.gz > hair-output/hair_anchor.glb
+          blender -b --factory-startup --python-exit-code 1 --python hair_swap.py -- \
+            models/hair-swap/head_input.glb.gz hair-output/hair_anchor.glb hair-output \
+            2>&1 | tee hair-output/blender-hair-swap.log
+          test -s hair-output/head_chestnut_hair.glb
+          test -s hair-output/head_chestnut_hair.blend
+          test -s hair-output/hair-swap-report.json
+      - name: Upload model and render evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: head-chestnut-hair
+          path: hair-output/
+          if-no-files-found: error
+          retention-days: 3
