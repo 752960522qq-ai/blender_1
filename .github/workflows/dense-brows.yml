@@ -1,0 +1,43 @@
+name: Densify Eyebrows
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/dense-brows.yml'
+      - 'edit_brows.py'
+      - 'brow_geometry.py'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  edit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: head-final-correction
+          path: source-model
+          run-id: 39137355638
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Download verified Blender
+        run: |
+          set -euo pipefail
+          curl -fLsS --retry 2 https://download.blender.org/release/Blender4.5/blender-4.5.14-linux-x64.tar.xz -o blender.tar.xz
+          echo '9ba871ff2ecd36526b77432745980b7e6664ecd0c7ca11c48849073dcfe06da3  blender.tar.xz' | sha256sum --check
+          tar -xJf blender.tar.xz
+          echo "$GITHUB_WORKSPACE/blender-4.5.14-linux-x64" >> "$GITHUB_PATH"
+      - name: Densify and validate without rendering
+        run: |
+          set -euo pipefail
+          mkdir -p brow-output
+          blender -b --factory-startup --python-exit-code 1 --python edit_brows.py -- source-model/head_corrected.glb brow-output 2>&1 | tee brow-output/blender-brows.log
+          test -s brow-output/brow-report.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: head-dense-brows
+          path: brow-output/
+          retention-days: 7
+          if-no-files-found: error
