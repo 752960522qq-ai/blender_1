@@ -1,0 +1,44 @@
+name: Refine Head Against Front Reference
+on:
+  push:
+    branches: ["codex/hair-swap-*"]
+    paths:
+      - 'face_refine.py'
+      - '.github/workflows/refine-face.yml'
+permissions:
+  contents: read
+  actions: read
+jobs:
+  refine-face:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: head-chestnut-hair
+          run-id: 39172664653
+          github-token: ${{ github.token }}
+          path: input
+      - name: Download verified Blender 4.5.14
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 2 --silent --show-error https://download.blender.org/release/Blender4.5/blender-4.5.14-linux-x64.tar.xz --output blender.tar.xz
+          echo '9ba871ff2ecd36526b77432745980b7e6664ecd0c7ca11c48849073dcfe06da3  blender.tar.xz' | sha256sum --check
+          tar -xJf blender.tar.xz
+          echo "$GITHUB_WORKSPACE/blender-4.5.14-linux-x64" >> "$GITHUB_PATH"
+      - name: Refine geometry and verify export without rendering
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p face-output
+          blender -b --factory-startup --python-exit-code 1 --python face_refine.py -- input/head_chestnut_hair.glb face-output 2>&1 | tee face-output/blender-refine.log
+          test -s face-output/refinement-report.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: head-reference-refined
+          path: face-output/
+          retention-days: 3
+          if-no-files-found: error
