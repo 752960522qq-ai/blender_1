@@ -95,20 +95,23 @@ face.data.calc_loop_triangles()
 head_points=[face.matrix_world @ v.co for v in face.data.vertices]
 head_tris=[tuple(t.vertices) for t in face.data.loop_triangles]
 head_bvh=BVHTree.FromPolygons(head_points,head_tris,all_triangles=True)
-clearance=0.0018
+hull=bmesh.new()
+for p in head_points: hull.verts.new(p)
+bmesh.ops.convex_hull(hull,input=list(hull.verts),use_existing_faces=False)
+hull.verts.index_update()
+hull_bvh=BVHTree.FromPolygons([v.co.copy() for v in hull.verts],[[v.index for v in f.verts] for f in hull.faces])
+hull.free()
+clearance=0.003
 zfloor=tlo.z+0.002
 
 def correction(p):
-    if p.z < tlo.z or p.z > thi.z: return Vector((0,0,0))
-    center=Vector((tc.x,tc.y,p.z))
-    direction=p-center
+    direction=p-tc
     radius=direction.length
     if radius<1e-8: return Vector((0,0,0))
     direction/=radius
-    loc,n,idx,d=head_bvh.ray_cast(center+direction*0.6,-direction,1.2)
+    loc,n,idx,d=hull_bvh.ray_cast(tc+direction*0.6,-direction,1.2)
     if loc is None: return Vector((0,0,0))
-    surface_radius=(loc-center).dot(direction)
-    if surface_radius<=0: return Vector((0,0,0))
+    surface_radius=(loc-tc).dot(direction)
     needed=surface_radius+clearance-radius
     return direction*max(0.0,needed)
 
@@ -143,7 +146,7 @@ for obj in hair_meshes:
     neighbors=[set() for p in pts]
     for a,b,c in tris:
         neighbors[a].update((b,c)); neighbors[b].update((a,c)); neighbors[c].update((a,b))
-    for iteration in range(22):
+    for iteration in range(12):
         for i,p in enumerate(pts): pts[i]=p+correction(p)
         shifts=[Vector((0,0,0)) for p in pts]
         for a,b,c in tris:
@@ -154,7 +157,7 @@ for obj in hair_meshes:
                     if delta.length_squared>shifts[k].length_squared: shifts[k]=delta
         pts=[p+d for p,d in zip(pts,shifts)]
         # Smooth the deformation field, not the original textured strand shape.
-        if iteration<10:
+        if iteration<5:
             disp=[p-o for p,o in zip(pts,original)]
             pts=[original[i]+disp[i]*0.75+sum((disp[k] for k in nb),Vector())*(0.25/len(nb)) if nb else pts[i] for i,nb in enumerate(neighbors)]
     for i,p in enumerate(pts): obj.data.vertices[i].co=p+correction(p)
