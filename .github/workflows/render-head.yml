@@ -1,0 +1,46 @@
+name: Render Final Head
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/render-head.yml'
+      - 'render_head.py'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  render:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reuse the final Blender model
+        uses: actions/download-artifact@v4
+        with:
+          name: head-final-correction
+          path: source-model
+          run-id: 39137355638
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Download verified Blender 4.5.14
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 2 --silent --show-error https://download.blender.org/release/Blender4.5/blender-4.5.14-linux-x64.tar.xz --output blender.tar.xz
+          echo '9ba871ff2ecd36526b77432745980b7e6664ecd0c7ca11c48849073dcfe06da3  blender.tar.xz' | sha256sum --check
+          tar -xJf blender.tar.xz
+          echo "$GITHUB_WORKSPACE/blender-4.5.14-linux-x64" >> "$GITHUB_PATH"
+      - name: Render one three-quarter portrait
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p render-output
+          blender -b --factory-startup --python-exit-code 1 --python render_head.py -- source-model/head_corrected.blend render-output/head_three_quarter.png 2>&1 | tee render-output/blender-render.log
+          test -s render-output/head_three_quarter.png
+      - name: Upload render
+        uses: actions/upload-artifact@v4
+        with:
+          name: final-head-render
+          path: render-output/
+          if-no-files-found: error
+          retention-days: 3
