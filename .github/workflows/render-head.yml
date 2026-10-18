@@ -1,4 +1,4 @@
-name: Render Final Head
+name: Render Brow Refined Head
 on:
   push:
     branches: [main]
@@ -18,9 +18,9 @@ jobs:
       - name: Reuse the final Blender model
         uses: actions/download-artifact@v4
         with:
-          name: head-final-correction
+          name: head-dense-brows
           path: source-model
-          run-id: 39137355638
+          run-id: 39140493061
           github-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Download verified Blender 4.5.14
         shell: bash
@@ -35,7 +35,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p render-output
-          blender -b --factory-startup --python-exit-code 1 --python render_head.py -- source-model/head_corrected.blend render-output 2>&1 | tee render-output/blender-render.log
+          blender -b --factory-startup --python-exit-code 1 --python render_head.py -- source-model/head_dense_brows.blend render-output 2>&1 | tee render-output/blender-render.log
           test -s render-output/head_front.png
           test -s render-output/head_45_degree.png
           test -s render-output/head_profile.png
