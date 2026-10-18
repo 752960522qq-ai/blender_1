@@ -120,7 +120,7 @@ doc['extensionsUsed']=[x for x in doc.get('extensionsUsed',[]) if x not in ('KHR
 json_chunk=json.dumps(doc,separators=(',',':'),ensure_ascii=False).encode('utf-8')
 json_chunk+=b' '*((-len(json_chunk))%4)
 rest=glb[20+json_len:]
-patched=b'glTF'+struct.pack('<II',2,12+len(json_chunk)+len(rest))+struct.pack('<I4s',len(json_chunk),b'JSON')+json_chunk+rest
+patched=b'glTF'+struct.pack('<II',2,20+len(json_chunk)+len(rest))+struct.pack('<I4s',len(json_chunk),b'JSON')+json_chunk+rest
 with open(model_path,'wb') as f: f.write(patched)
 
 # Re-import the exported GLB in a clean file to validate the deliverable.
