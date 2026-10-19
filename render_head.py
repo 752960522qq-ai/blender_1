@@ -5,7 +5,10 @@ args=sys.argv[sys.argv.index("--")+1:] if "--" in sys.argv else []
 if len(args)!=2: raise SystemExit("Usage: render_head.py <model.blend|model.glb> <output_dir>")
 model_path=os.path.abspath(args[0]); output_dir=os.path.abspath(args[1])
 bpy.ops.wm.read_factory_settings(use_empty=True)
-if model_path.lower().endswith('.glb'):\n    bpy.ops.import_scene.gltf(filepath=model_path)\nelse:\n    bpy.ops.wm.open_mainfile(filepath=model_path)
+if model_path.lower().endswith('.glb'):
+    bpy.ops.import_scene.gltf(filepath=model_path)
+else:
+    bpy.ops.wm.open_mainfile(filepath=model_path)
 scene=bpy.context.scene
 meshes=[o for o in scene.objects if o.type=="MESH"]
 if not meshes: raise RuntimeError("No mesh found")
