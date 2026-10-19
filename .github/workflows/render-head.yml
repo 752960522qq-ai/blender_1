@@ -20,7 +20,7 @@ jobs:
         with:
           name: head-reference-refined
           path: source-model
-          run-id: 39174425419
+          run-id: 39195418607
           github-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Download verified Blender 4.5.14
         shell: bash
@@ -35,7 +35,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p render-output
-          blender -b --factory-startup --python-exit-code 1 --python render_head.py -- source-model/head_reference_refined.blend render-output 2>&1 | tee render-output/blender-render.log
+          blender -b --factory-startup --python-exit-code 1 --python render_head.py -- source-model/head_soft_brows_eyes.blend render-output 2>&1 | tee render-output/blender-render.log
           test -s render-output/head_front.png
           test -s render-output/head_45_degree.png
           test -s render-output/head_profile.png
