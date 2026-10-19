@@ -1,36 +1,36 @@
-name: Match head skin to Jill body
+name: Export bright head and neck without hair
 on:
   push:
     branches: [codex/jill-head-swap]
-    paths: ['match_skin.py', '.github/workflows/match-skin.yml']
+    paths: ['export_head_neck.py', '.github/workflows/export-head-neck.yml']
 permissions:
   contents: read
   actions: read
 jobs:
-  match:
+  export:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          name: jill-head-hair-replaced
+          name: jill-skin-matched
           path: prior
-          run-id: 39200140777
+          run-id: 39203132805
           github-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Install Blender
         run: |
           curl -fsSL --retry 3 https://download.blender.org/release/Blender4.5/blender-4.5.14-linux-x64.tar.xz -o blender.tar.xz
           echo '9ba871ff2ecd36526b77432745980b7e6664ecd0c7ca11c48849073dcfe06da3  blender.tar.xz' | sha256sum --check
           tar -xJf blender.tar.xz
-      - name: Match skin and verify GLB
+      - name: Export head and neck and verify
         run: |
           set -o pipefail
-          mkdir -p skin-output
-          ./blender-4.5.14-linux-x64/blender -b --factory-startup --python-exit-code 1 --python match_skin.py 2>&1 | tee skin-output/blender.log
+          mkdir -p head-output
+          ./blender-4.5.14-linux-x64/blender -b --factory-startup --python-exit-code 1 --python export_head_neck.py 2>&1 | tee head-output/blender.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: jill-skin-matched
-          path: skin-output/
+          name: jill-head-neck-no-hair
+          path: head-output/
           retention-days: 3
