@@ -1,0 +1,122 @@
+name: Blender Remote Worker
+
+# Push validates GitHub-hosted Blender itself. Manual runs can validate any
+# model committed to this repository. No local Blender execution is involved.
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/blender-remote-worker.yml"
+      - "remote_blender_job.py"
+  workflow_dispatch:
+    inputs:
+      run_mode:
+        description: "Smoke test or verify an existing model without editing it"
+        type: choice
+        options:
+          - smoke
+          - model_check
+        default: model_check
+        required: true
+      model_path:
+        description: "Repository-relative .glb, .gltf, or .blend path"
+        type: string
+        default: "models/head-input.glb"
+        required: true
+      reference_path:
+        description: "Optional repository-relative front reference PNG/JPG (empty to skip)"
+        type: string
+        default: ""
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  remote-blender:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      RUN_MODE: \${{ github.event.inputs.run_mode || 'smoke' }}
+      MODEL_PATH: \${{ github.event.inputs.model_path || 'models/head-input.glb' }}
+      REFERENCE_PATH: \${{ github.event.inputs.reference_path || '' }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate file paths (without evaluating user input in shell)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          repo = Path(os.environ['GITHUB_WORKSPACE']).resolve()
+          mode = os.environ['RUN_MODE']
+          if mode not in ('smoke', 'model_check'):
+              raise SystemExit('Invalid run mode')
+          if mode == 'smoke':
+              raise SystemExit(0)
+          for name, allowed, optional in [
+              ('MODEL_PATH', {'.glb', '.gltf', '.blend'}, False),
+              ('REFERENCE_PATH', {'.png', '.jpg', '.jpeg', '.webp'}, True),
+          ]:
+              val = os.environ[name]
+              if optional and not val:
+                  continue
+              if not val or Path(val).is_absolute() or '..' in Path(val).parts:
+                  raise SystemExit(f'Unsafe {name}: {val!r}')
+              path = (repo / val).resolve()
+              if not path.is_relative_to(repo) or not path.is_file():
+                  raise SystemExit(f'{name} does not point to a checked-out file: {val!r}')
+              if path.suffix.lower() not in allowed:
+                  raise SystemExit(f'Unexpected file extension for {name}: {val!r}')
+          print('Validated checked-out inputs')
+          PY
+
+      - name: Install verified Blender 4.5.14 on GitHub runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="https://download.blender.org/release/Blender4.5/blender-4.5.14-linux-x64.tar.xz"
+          curl --fail --location --retry 3 --silent --show-error "$url" -o blender.tar.xz
+          echo "9ba871ff2ecd36526b77432745980b7e6664ecd0c7ca11c48849073dcfe06da3  blender.tar.xz" | sha256sum -c -
+          tar -xJf blender.tar.xz
+          echo "$GITHUB_WORKSPACE/blender-4.5.14-linux-x64" >> "$GITHUB_PATH"
+
+      - name: Confirm Blender version
+        shell: bash
+        run: |
+          set -euo pipefail
+          blender --version | head -n 2
+
+      - name: Run Blender on remote GitHub runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p remote-output
+          if [ "$RUN_MODE" = "smoke" ]; then
+            blender -b --factory-startup --python-exit-code 1 --python test_blender.py 2>&1 | tee remote-output/blender.log
+            mv render.png roundtrip.glb remote-output/
+          else
+            # Arguments passed as quoted data, not shell code.
+            model="$GITHUB_WORKSPACE/$MODEL_PATH"
+            reference=""
+            if [ -n "$REFERENCE_PATH" ]; then
+              reference="$GITHUB_WORKSPACE/$REFERENCE_PATH"
+            fi
+            blender -b --factory-startup --python-exit-code 1 --python remote_blender_job.py -- \
+              "$model" "$reference" "$GITHUB_WORKSPACE/remote-output" \
+              2>&1 | tee remote-output/blender.log
+            test -s remote-output/model_roundtrip.glb
+            test -s remote-output/validation_report.json
+          fi
+
+      - name: Upload logs, verified model, and Blender project
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: blender-remote-worker-results
+          path: remote-output/
+          if-no-files-found: warn
+          retention-days: 7
