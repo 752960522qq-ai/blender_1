@@ -125,6 +125,12 @@ def surface_info(x,y):
     hit,n,idx,d=surface.ray_cast(Vector((float(x),float(y),.4)),Vector((0,0,-1)),.7)
     assert hit is not None and abs(n.z)>1e-7
     return hit.z,np.array([-n.x/n.z,-n.y/n.z])
+def tangent_rotation(a,b):
+    a=a/np.linalg.norm(a);b=b/np.linalg.norm(b)
+    v=np.cross(a,b);c=float(a@b)
+    K=np.array([[0,-v[2],v[1]],[v[2],0,-v[0]],[-v[1],v[0],0]])
+    assert c>-.95
+    return np.eye(3)+K+K@K/(1+c)
 
 # Keep every existing strand, preserving its geometry and natural irregularity.
 p,M=canonical(brows);mesh=brows.data;labels=components(mesh)
@@ -143,16 +149,20 @@ for k,g in enumerate(groups):
     residual=c[1]-oldline
     nc=c.copy();nc[0]=MID+side*radius;nc[1]=desired+residual
     q[g]=p[g]+(nc-c)
-    # Transport each tube across the changing brow-surface slope, instead of
-    # translating an entire tilted strand outwards to clear the skin.
-    gaps=[]
-    for vi in g:
-        oz,og=surface_info(p[vi,0],p[vi,1]);nz,ng=surface_info(q[vi,0],q[vi,1])
-        gap=p[vi,2]-oz;gaps.append(gap);q[vi,2]=nz+gap
-        browJ[vi,2,:2]=ng-og
-    required=max(0,.00008-min(gaps))
-    q[g,2]+=required;newcenters.append(q[g].mean(0))
-    root_clearances.extend([v+required for v in gaps])
+    # Existing fibres have six rings of five vertices. Conform their centre
+    # paths to the skin while keeping every ring radius and every fibre.
+    assert len(g)==30 and np.all(np.diff(g)==1)
+    rings=g.reshape(6,5);oldc=p[rings].mean(1);newc=oldc+(nc-c)
+    for ri,cc in enumerate(newc):
+        newc[ri,2]=surface_z(cc[0],cc[1])+.00023+.00010*np.sin(np.pi*ri/5)
+    for ri,ids in enumerate(rings):
+        before=max(0,ri-1);after=min(5,ri+1)
+        R=tangent_rotation(oldc[after]-oldc[before],newc[after]-newc[before])
+        q[ids]=newc[ri]+(p[ids]-oldc[ri])@R.T;browJ[ids]=R
+        gaps=[v[2]-surface_z(v[0],v[1]) for v in q[ids]]
+        lift=max(0,.00008-min(gaps));q[ids,2]+=lift
+        root_clearances.extend([v+lift for v in gaps])
+    newcenters.append(q[g].mean(0))
     edge=float(smooth(.00065,.00215,abs(residual)))
     root=float(1-smooth(.011,.019,radius))
     blend=max(edge*.80,root*.45)
@@ -224,3 +234,4 @@ report['validation']={'glb_reimport':'passed','meshes':len(out),'triangles':expe
 report['output_sha256']=hashlib.sha256(raw).hexdigest()
 with open(os.path.join(outdir,'soft-brows-eyes-report.json'),'w') as f:json.dump(report,f,indent=2)
 print('SOFT_BROWS_EYES_OK',json.dumps(report['validation']),flush=True)
+
