@@ -24,10 +24,19 @@ on:
         default: "models/head-input.glb"
         required: true
       reference_path:
-        description: "Optional repository-relative front reference PNG/JPG (empty to skip)"
+        description: "Optional repository-relative reference image PNG/JPG (empty to skip)"
         type: string
         default: ""
         required: false
+      reference_view:
+        description: "Orientation of the camera reference (front, 45 degrees, 90 degrees)"
+        type: choice
+        options:
+          - front
+          - three_quarter
+          - profile
+        default: front
+        required: true
 
 permissions:
   contents: read
@@ -40,6 +49,7 @@ jobs:
       RUN_MODE: ${{ github.event.inputs.run_mode || 'model_check' }}
       MODEL_PATH: ${{ github.event.inputs.model_path || 'models/head-input.glb' }}
       REFERENCE_PATH: ${{ github.event.inputs.reference_path || '' }}
+      REFERENCE_VIEW: ${{ github.event.inputs.reference_view || 'front' }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -106,7 +116,7 @@ jobs:
               reference="$GITHUB_WORKSPACE/$REFERENCE_PATH"
             fi
             blender -b --factory-startup --python-exit-code 1 --python remote_blender_job.py -- \
-              "$model" "$reference" "$GITHUB_WORKSPACE/remote-output" \
+              "$model" "$reference" "$GITHUB_WORKSPACE/remote-output" "$REFERENCE_VIEW" \
               2>&1 | tee remote-output/blender.log
             test -s remote-output/model_roundtrip.glb
             test -s remote-output/validation_report.json
