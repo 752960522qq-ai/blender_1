@@ -121,6 +121,10 @@ fp,_=canonical(face);surface=tree(fp,ft)
 def surface_z(x,y):
     hit,n,idx,d=surface.ray_cast(Vector((float(x),float(y),.4)),Vector((0,0,-1)),.7)
     return None if hit is None else hit.z
+def surface_info(x,y):
+    hit,n,idx,d=surface.ray_cast(Vector((float(x),float(y),.4)),Vector((0,0,-1)),.7)
+    assert hit is not None and abs(n.z)>1e-7
+    return hit.z,np.array([-n.x/n.z,-n.y/n.z])
 
 # Keep every existing strand, preserving its geometry and natural irregularity.
 p,M=canonical(brows);mesh=brows.data;labels=components(mesh)
@@ -132,21 +136,23 @@ for side in [-1,1]:
     m=np.sign(centers[:,0]-MID)==side
     fits[side]=np.polynomial.Polynomial.fit(r[m],centers[m,1],4).convert()
 q=p.copy();colors=np.ones((len(p),4),dtype=np.float32);newcenters=[];root_clearances=[]
+browJ=np.tile(np.eye(3),(len(p),1,1))
 for k,g in enumerate(groups):
     c=centers[k];side=-1 if c[0]<MID else 1;a=r[k]
     oldline=float(fits[side](a));radius=float(brow_radius(a));desired=float(brow_line(radius))
     residual=c[1]-oldline
     nc=c.copy();nc[0]=MID+side*radius;nc[1]=desired+residual
-    oz=surface_z(c[0],c[1]);nz=surface_z(nc[0],nc[1]);assert oz is not None and nz is not None
-    nc[2]=nz+max(c[2]-oz,.00022)
     q[g]=p[g]+(nc-c)
-    # Maintain front-surface clearance after the lateral move.
-    required=0.0
-    for v in q[g]:
-        zz=surface_z(v[0],v[1])
-        if zz is not None:required=max(required,zz+.00008-v[2])
+    # Transport each tube across the changing brow-surface slope, instead of
+    # translating an entire tilted strand outwards to clear the skin.
+    gaps=[]
+    for vi in g:
+        oz,og=surface_info(p[vi,0],p[vi,1]);nz,ng=surface_info(q[vi,0],q[vi,1])
+        gap=p[vi,2]-oz;gaps.append(gap);q[vi,2]=nz+gap
+        browJ[vi,2,:2]=ng-og
+    required=max(0,.00008-min(gaps))
     q[g,2]+=required;newcenters.append(q[g].mean(0))
-    root_clearances.append(float(q[g,2].min()))
+    root_clearances.extend([v+required for v in gaps])
     edge=float(smooth(.00065,.00215,abs(residual)))
     root=float(1-smooth(.011,.019,radius))
     blend=max(edge*.80,root*.45)
@@ -157,7 +163,12 @@ for k,g in enumerate(groups):
     shade=(core*(1-blend)+rim*blend)*variation
     colors[g,:3]=shade[None,:]*(1+.10*tip[:,None])
 rec=geometry_stats(p,q,triangles(mesh));world=q[:,[0,2,1]]*np.array([1,-1,1]);local=(world-M[:3,3])@np.linalg.inv(M[:3,:3]).T
-oldnorm=np.array([n.vector[:] for n in mesh.corner_normals]);mesh.vertices.foreach_set('co',local.astype(np.float32).ravel());mesh.update();mesh.normals_split_custom_set(oldnorm.tolist())
+A=M[:3,:3];lv=np.empty(len(mesh.loops),dtype=np.int32);mesh.loops.foreach_get('vertex_index',lv)
+oldnorm=np.array([n.vector[:] for n in mesh.corner_normals])
+cn=norm((oldnorm@np.linalg.inv(A))[:,[0,2,1]]*np.array([1,1,-1]))
+cn=norm(np.linalg.solve(browJ[lv].transpose(0,2,1),cn[...,None])[...,0])
+newnorm=norm((cn[:,[0,2,1]]*np.array([1,-1,1]))@A)
+mesh.vertices.foreach_set('co',local.astype(np.float32).ravel());mesh.update();mesh.normals_split_custom_set(newnorm.tolist())
 color=mesh.color_attributes.new(name='BrowSoftTint',type='FLOAT_COLOR',domain='POINT');color.data.foreach_set('color',colors.ravel());mesh.color_attributes.active_color=color
 mat=mesh.materials[0];mat.name='Soft neutral brown brows | full strand density';mat.use_nodes=True
 bs=next(n for n in mat.node_tree.nodes if n.type=='BSDF_PRINCIPLED')
@@ -166,6 +177,8 @@ col=mat.node_tree.nodes.new('ShaderNodeVertexColor');col.layer_name=color.name;m
 bs.inputs['Alpha'].default_value=1;bs.inputs['Roughness'].default_value=.86
 mat.diffuse_color=(.035,.026,.020,1)
 rec.update({'name':brows.name,'strands_before':count,'strands_after':count,'density_reduced':False,'alpha_min':float(colors[:,3].min()),'color_linear_min':colors[:,:3].min(0).tolist(),'color_linear_max':colors[:,:3].max(0).tolist(),'edge_transition':'continuous per-strand vertex tint, opaque'})
+rec['brow_skin_clearance_mm_quantiles']=(np.quantile(root_clearances,[0,.5,.95,1])*1000).tolist()
+assert np.quantile(root_clearances,.95)<.0018,'Brow surface fitting left too much clearance'
 knots=np.array([.012,.021,.028,.037,.051]);rec['target_centerline_x_y_mm']=np.column_stack([knots,brow_line(knots)]).tolist()
 rec['target_centerline_x_y_mm']=(np.column_stack([knots,brow_line(knots)])*1000).tolist()
 newcenters=np.array(newcenters);rec['tail_radius_before_mm']=float(r.max()*1000);rec['tail_radius_after_mm']=float(abs(newcenters[:,0]-MID).max()*1000)
