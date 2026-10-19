@@ -3,6 +3,8 @@ import os
 
 out = os.environ.get("GITHUB_WORKSPACE", os.getcwd())
 print("BLENDER_VERSION:", bpy.app.version_string)
+print("RUNNER_PLATFORM:", os.name)
+assert bpy.app.version >= (4, 5, 0), "Blender version is too old"
 
 # Build a small scene and render with CPU Cycles.
 bpy.ops.wm.read_factory_settings(use_empty=True)
@@ -40,5 +42,6 @@ bpy.ops.wm.read_factory_settings(use_empty=True)
 bpy.ops.import_scene.gltf(filepath=glb_path)
 meshes = [obj for obj in bpy.context.scene.objects if obj.type == "MESH"]
 assert any(obj.name == "SmokeTestCube" for obj in meshes), [obj.name for obj in meshes]
+assert any(len(obj.data.vertices) == 8 for obj in meshes if obj.name == "SmokeTestCube"), "GLB mesh geometry changed unexpectedly"
 print("GLB_EXPORT_IMPORT_OK:", glb_path, "mesh_count=", len(meshes))
 print("BLENDER_ACTIONS_SMOKE_TEST_OK")
