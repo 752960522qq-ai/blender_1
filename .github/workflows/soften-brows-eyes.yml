@@ -1,0 +1,44 @@
+name: Soften Brows Eyes and Hairline
+on:
+  push:
+    branches: ["codex/hair-swap-20261019"]
+    paths:
+      - 'soften_brows_eyes.py'
+      - '.github/workflows/soften-brows-eyes.yml'
+permissions:
+  contents: read
+  actions: read
+jobs:
+  refine:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: head-reference-refined
+          run-id: 39174425419
+          github-token: ${{ github.token }}
+          path: input
+      - name: Download verified Blender 4.5.14
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 2 --silent --show-error https://download.blender.org/release/Blender4.5/blender-4.5.14-linux-x64.tar.xz --output blender.tar.xz
+          echo '9ba871ff2ecd36526b77432745980b7e6664ecd0c7ca11c48849073dcfe06da3  blender.tar.xz' | sha256sum --check
+          tar -xJf blender.tar.xz
+          echo "$GITHUB_WORKSPACE/blender-4.5.14-linux-x64" >> "$GITHUB_PATH"
+      - name: Refine and validate without rendering
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p soft-output
+          blender -b --factory-startup --python-exit-code 1 --python soften_brows_eyes.py -- input/head_reference_refined.glb soft-output 2>&1 | tee soft-output/blender-soften.log
+          test -s soft-output/soft-brows-eyes-report.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: head-soft-brows-eyes
+          path: soft-output/
+          retention-days: 7
+          if-no-files-found: error
