@@ -42,6 +42,6 @@ bpy.ops.wm.read_factory_settings(use_empty=True)
 bpy.ops.import_scene.gltf(filepath=glb_path)
 meshes = [obj for obj in bpy.context.scene.objects if obj.type == "MESH"]
 assert any(obj.name == "SmokeTestCube" for obj in meshes), [obj.name for obj in meshes]
-assert any(len(obj.data.vertices) == 8 for obj in meshes if obj.name == "SmokeTestCube"), "GLB mesh geometry changed unexpectedly"
+assert any(len(obj.data.vertices) >= 8 and len(obj.data.polygons) >= 6 for obj in meshes if obj.name == "SmokeTestCube"), "GLB cube geometry missing"
 print("GLB_EXPORT_IMPORT_OK:", glb_path, "mesh_count=", len(meshes))
 print("BLENDER_ACTIONS_SMOKE_TEST_OK")

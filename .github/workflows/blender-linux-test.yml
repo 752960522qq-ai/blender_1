@@ -38,7 +38,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          blender -b --factory-startup --python test_blender.py 2>&1 | tee blender-test.log
+          blender -b --factory-startup --python-exit-code 1 --python test_blender.py 2>&1 | tee blender-test.log
 
       - name: Upload test evidence
         if: always()
