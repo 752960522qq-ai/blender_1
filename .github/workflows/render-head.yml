@@ -18,7 +18,7 @@ jobs:
       - name: Reuse the final Blender model
         uses: actions/download-artifact@v4
         with:
-          name: head-reference-refined
+          name: head-soft-brows-eyes
           path: source-model
           run-id: 39195418607
           github-token: ${{ secrets.GITHUB_TOKEN }}
