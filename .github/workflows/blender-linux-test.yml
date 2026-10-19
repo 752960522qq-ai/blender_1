@@ -2,7 +2,7 @@ name: Blender Linux Runtime Test
 
 on:
   push:
-    branches: [main]
+    branches: [main, codex/hair-swap-20261019]
     paths:
       - '.github/workflows/blender-linux-test.yml'
       - 'test_blender.py'
