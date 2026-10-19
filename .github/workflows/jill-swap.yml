@@ -1,0 +1,31 @@
+name: Replace Jill head and hair in Blender
+on:
+  push:
+    branches: [codex/jill-head-swap]
+    paths: ['jill_swap.py', 'models/jill-swap/**', '.github/workflows/jill-swap.yml']
+permissions:
+  contents: read
+jobs:
+  replace:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install verified Blender
+        run: |
+          curl -fsSL --retry 3 https://download.blender.org/release/Blender4.5/blender-4.5.14-linux-x64.tar.xz -o blender.tar.xz
+          echo '9ba871ff2ecd36526b77432745980b7e6664ecd0c7ca11c48849073dcfe06da3  blender.tar.xz' | sha256sum --check
+          tar -xJf blender.tar.xz
+      - name: Replace and validate without rendering
+        run: |
+          set -o pipefail
+          cat models/jill-swap/body.part* > models/jill-swap/body.glb.gz
+          cat models/jill-swap/head.part* > models/jill-swap/head.glb.gz
+          mkdir -p jill-output
+          ./blender-4.5.14-linux-x64/blender -b --factory-startup --python-exit-code 1 --python jill_swap.py 2>&1 | tee jill-output/blender.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: jill-head-hair-replaced
+          path: jill-output/
+          retention-days: 3
