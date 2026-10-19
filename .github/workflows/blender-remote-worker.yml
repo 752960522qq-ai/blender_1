@@ -37,7 +37,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     env:
-      RUN_MODE: ${{ github.event.inputs.run_mode || 'smoke' }}
+      RUN_MODE: ${{ github.event.inputs.run_mode || 'model_check' }}
       MODEL_PATH: ${{ github.event.inputs.model_path || 'models/head-input.glb' }}
       REFERENCE_PATH: ${{ github.event.inputs.reference_path || '' }}
     steps:
