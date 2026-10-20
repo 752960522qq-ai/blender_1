@@ -94,6 +94,42 @@ jobs:
           print('INPUT_PREFLIGHT_OK',mode)
           PY
 
+      - name: Generate a synthetic 45-degree background for the remote smoke test
+        if: env.MODE == 'smoke'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+          import struct
+          import zlib
+          from pathlib import Path
+          width, height = 192, 192
+          rows = []
+          for y in range(height):
+              pixel_row = bytearray()
+              for x in range(width):
+                  crosshair = abs(x - y) < 2 or abs(x + y - (width - 1)) < 2
+                  pixel_row.extend((36, 45, 62) if crosshair else (216, 229, 239))
+              rows.append(b'\x00' + pixel_row)
+          def chunk(kind, payload):
+              return (struct.pack('!I', len(payload)) + kind + payload
+                      + struct.pack('!I', zlib.crc32(kind + payload) & 0xffffffff))
+          png = (
+              b'\x89PNG\r\n\x1a\n'
+              + chunk(b'IHDR', struct.pack('!2I5B', width, height, 8, 2, 0, 0, 0))
+              + chunk(b'IDAT', zlib.compress(b''.join(rows)))
+              + chunk(b'IEND', b'')
+          )
+          Path('references').mkdir(exist_ok=True)
+          p = Path('references/remote-smoke-45.png')
+          p.write_bytes(png)
+          assert p.stat().st_size > 100
+          with open(os.environ['GITHUB_ENV'], 'a', encoding='utf8') as env_file:
+              env_file.write('INPUT_REFERENCE=references/remote-smoke-45.png\n')
+          print('SYNTHETIC_45_REFERENCE_READY', p, p.stat().st_size)
+          PY
+
       - name: Cache official Blender 4.5.14 binaries
         uses: actions/cache@v4
         with:
