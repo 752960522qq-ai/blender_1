@@ -83,3 +83,12 @@ fs.mkdirSync('offline-test-output',{recursive:true});
 fs.writeFileSync('offline-test-output/test_v14.glb',bytes);
 fs.writeFileSync('offline-test-output/test_report.json',JSON.stringify(report,null,2));
 console.log('BROWSER_GLB_REPAIR_SMOKE_OK',JSON.stringify(report));
+
+const html=fs.readFileSync('restore-glb-offline.html','utf8');
+const scripts=[...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(m=>m[1]);
+assert.strictEqual(scripts.length,2,'Offline HTML must embed both engine and interaction code');
+const sourceModule=fs.readFileSync('tools/restore_features_in_browser.js','utf8').trim();
+assert.strictEqual(scripts[0].trim(),sourceModule,
+  'Offline HTML must contain the tested, current version of the GLB repair engine');
+new Function(scripts[1]);
+console.log('STANDALONE_HTML_SCRIPT_VERIFIED');
