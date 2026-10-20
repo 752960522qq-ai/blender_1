@@ -1,0 +1,112 @@
+name: Blender V12 45-Degree Refinement
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/refine-v12-45.yml'
+      - 'refine_v12_45.py'
+  workflow_dispatch:
+    inputs:
+      run_mode:
+        description: 'smoke = existing repository test model; refine = your uploaded V12'
+        required: true
+        type: choice
+        options: [smoke, refine]
+        default: refine
+      model_path:
+        description: 'Checked-in V12 GLB path, e.g. models/jill_head_refined_eye_jaw_v12.glb'
+        required: true
+        default: 'models/jill_head_refined_eye_jaw_v12.glb'
+        type: string
+      reference_path:
+        description: 'Checked-in 45-degree reference image, e.g. references/jill_45.png'
+        required: false
+        default: 'references/jill_45.png'
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  blender-v12:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.run_mode || 'smoke' }}
+      INPUT_MODEL: ${{ github.event_name == 'workflow_dispatch' && inputs.model_path || 'models/head-input.glb' }}
+      INPUT_REFERENCE: ${{ github.event_name == 'workflow_dispatch' && inputs.reference_path || '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Reject missing or unsafe checked-in inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          root=Path(os.environ['GITHUB_WORKSPACE']).resolve()
+          mode=os.environ['MODE']
+          if mode not in ('smoke','refine'):
+              raise SystemExit('Invalid run mode')
+          for var, suffixes, required in [
+              ('INPUT_MODEL',{'.glb'},True),
+              ('INPUT_REFERENCE',{'.png','.jpg','.jpeg','.webp'},mode=='refine')]:
+              value = os.environ[var]
+              if not value and not required:
+                  continue
+              p=Path(value)
+              if not value or p.is_absolute() or '..' in p.parts:
+                  raise SystemExit(f'Unsafe or missing input {var}: {value!r}')
+              resolved=(root/p).resolve()
+              if not resolved.is_relative_to(root) or not resolved.is_file():
+                  raise SystemExit(f'{var} not checked into the repository: {value!r}')
+              if resolved.suffix.lower() not in suffixes:
+                  raise SystemExit(f'Bad extension for {var}')
+          if mode=='refine' and Path(os.environ['INPUT_MODEL']).name!='jill_head_refined_eye_jaw_v12.glb':
+              raise SystemExit('Refusing to substitute an older GLB for the uploaded V12')
+          print('INPUT_PREFLIGHT_OK',mode)
+          PY
+
+      - name: Cache official Blender 4.5.14 binaries
+        uses: actions/cache@v4
+        with:
+          path: blender-4.5.14-linux-x64
+          key: blender-4.5.14-linux-x64-9ba871ff2ecd3652-v1
+
+      - name: Install Blender from official verified archive if not cached
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -x blender-4.5.14-linux-x64/blender ]; then
+            curl --fail --location --retry 3 --silent --show-error \
+              'https://download.blender.org/release/Blender4.5/blender-4.5.14-linux-x64.tar.xz' -o blender.tar.xz
+            echo '9ba871ff2ecd36526b77432745980b7e6664ecd0c7ca11c48849073dcfe06da3  blender.tar.xz' | sha256sum -c -
+            tar -xJf blender.tar.xz
+          fi
+          echo "$GITHUB_WORKSPACE/blender-4.5.14-linux-x64" >> "$GITHUB_PATH"
+
+      - name: Run conservatively bounded Blender geometry edit and GLB re-import test
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile refine_v12_45.py
+          mkdir -p v12-output
+          blender -b --factory-startup --python-exit-code 1 --python refine_v12_45.py -- \
+            "$GITHUB_WORKSPACE/$INPUT_MODEL" \
+            "${INPUT_REFERENCE:+$GITHUB_WORKSPACE/$INPUT_REFERENCE}" \
+            "$GITHUB_WORKSPACE/v12-output" "$MODE" \
+            2>&1 | tee v12-output/execution.log
+          test -s v12-output/head_v12_45_refined.glb
+          test -s v12-output/report.json
+          test -s v12-output/head_v12_45_review.blend
+
+      - name: Upload model, Blender project, and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: blender-v12-${{ github.event_name == 'workflow_dispatch' && inputs.run_mode || 'smoke' }}-results
+          path: v12-output/
+          if-no-files-found: warn
+          retention-days: 7
