@@ -62,6 +62,7 @@ face = max(face_candidates or meshes, key=lambda o: len(o.data.polygons))
 if len(face.data.vertices) < 1000:
     raise RuntimeError("No sufficiently detailed head mesh could be identified")
 
+face_name = face.name
 original_materials = [(o.name, [m.name if m else "" for m in o.data.materials]) for o in meshes]
 original_images = sorted([(im.name, tuple(im.size)) for im in bpy.data.images if im.has_data])
 original_uvs = {o.name: len(o.data.uv_layers) for o in meshes}
@@ -266,7 +267,7 @@ report={
     "source_sha256":sha256(source),
     "reference_present":image_added,
     "source_meshes":mesh_names,
-    "edited_mesh":face.name,
+    "edited_mesh":face_name,
     "initial_geometry":original_counts,
     "after_edit_polygons":after_faces,
     "apex_world_coordinates":[world[i].tolist() for i in anchors],
