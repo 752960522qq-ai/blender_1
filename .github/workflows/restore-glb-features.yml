@@ -67,8 +67,8 @@ jobs:
               if v12 == v13:
                   raise SystemExit('Real repair mode needs two different input files')
           with open(os.environ['GITHUB_ENV'], 'a') as handle:
-              handle.write('GLB_V12='+str(v12)+'\\n')
-              handle.write('GLB_V13='+str(v13)+'\\n')
+              print('GLB_V12='+str(v12), file=handle)
+              print('GLB_V13='+str(v13), file=handle)
           print('INPUTS_VERIFIED',os.environ['MODE'],v12,v13)
           PY
 
