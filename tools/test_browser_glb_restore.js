@@ -22,7 +22,44 @@ const jsonLen=dv.getUint32(12,true);
 const offset=12+8+jsonLen+8+(bv.byteOffset||0)+(acc.byteOffset||0);
 const first=dv.getFloat32(offset,true), altered=first+0.00012;
 dv.setFloat32(offset,altered,true);
-const {bytes,report}=api.repair(original,modified);
+// Simulate the user's v13 defect: remove brow/lash/eye object bindings and
+// corrupt iris material references in the SOURCE (v13). The output must still
+// contain all ORIGINAL v12 eye/brow/lash meshes, materials and textures.
+const damagedDoc=api.parse(modified,'damaged-v13').json;
+for (const n of damagedDoc.nodes) {
+  if (/brow|lash|eye/i.test(n.name||'')) delete n.mesh;
+}
+for (const mat of damagedDoc.materials||[]) {
+  if (/eye|iris|brown/i.test(mat.name||'')) mat.name='PURPOSEFULLY_CORRUPTED';
+}
+function rebuild(doc, raw) {
+  const enc=new TextEncoder();
+  const bytes=Buffer.from(raw);
+  const rawJson=enc.encode(JSON.stringify(doc));
+  const pad=(4-rawJson.length%4)%4;
+  const src=new DataView(bytes.buffer,bytes.byteOffset,bytes.length);
+  const oldJSONLength=src.getUint32(12,true);
+  const binStart=12+8+oldJSONLength;
+  const binSize=src.getUint32(binStart,true);
+  const binData=bytes.subarray(binStart+8,binStart+8+binSize);
+  const binPad=(4-binData.length%4)%4;
+  const total=12+8+rawJson.length+pad+8+binData.length+binPad;
+  const out=Buffer.alloc(total);
+  out.writeUInt32LE(0x46546c67,0);
+  out.writeUInt32LE(2,4);
+  out.writeUInt32LE(total,8);
+  out.writeUInt32LE(rawJson.length+pad,12);
+  out.writeUInt32LE(0x4e4f534a,16);
+  out.set(rawJson,20);
+  out.fill(32,20+rawJson.length,20+rawJson.length+pad);
+  const p=20+rawJson.length+pad;
+  out.writeUInt32LE(binData.length+binPad,p);
+  out.writeUInt32LE(0x004e4942,p+4);
+  out.set(binData,p+8);
+  return out;
+}
+const deliberatelyBrokenV13=rebuild(damagedDoc,modified);
+const {bytes,report}=api.repair(original,deliberatelyBrokenV13);
 assert.strictEqual(report.status,'PASS');
 assert(report.retainedV12Materials>0);
 assert(report.retainedV12Images>0);
