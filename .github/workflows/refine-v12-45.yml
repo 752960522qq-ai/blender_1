@@ -24,6 +24,11 @@ on:
         required: false
         default: 'references/jill_45.png'
         type: string
+      source_release_tag:
+        description: 'Optional release tag containing jill_head_refined_eye_jaw_v12.glb and jill_45.png; bypasses repository-file size limit'
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: read
@@ -36,8 +41,28 @@ jobs:
       MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.run_mode || 'smoke' }}
       INPUT_MODEL: ${{ github.event_name == 'workflow_dispatch' && inputs.model_path || 'models/head-input.glb' }}
       INPUT_REFERENCE: ${{ github.event_name == 'workflow_dispatch' && inputs.reference_path || '' }}
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.source_release_tag || '' }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Fetch exact V12 input assets from GitHub Release, when requested
+        if: env.RELEASE_TAG != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$RELEASE_TAG" =~ ^[a-zA-Z0-9._-]+$ ]]; then
+            echo 'Invalid source release tag' >&2
+            exit 1
+          fi
+          mkdir -p models references
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern 'jill_head_refined_eye_jaw_v12.glb' --dir models
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern 'jill_45.png' --dir references
+          echo 'INPUT_MODEL=models/jill_head_refined_eye_jaw_v12.glb' >> "$GITHUB_ENV"
+          echo 'INPUT_REFERENCE=references/jill_45.png' >> "$GITHUB_ENV"
 
       - name: Reject missing or unsafe checked-in inputs
         shell: bash
