@@ -1,0 +1,41 @@
+name: Serve Private GLB Repair Tool on GitHub Pages
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'restore-glb-offline.html'
+      - '.github/workflows/serve-offline-glb-tool.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: github-pages
+  cancel-in-progress: true
+jobs:
+  deploy-local-only-tool:
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create public page containing only code, no GLB models
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p _site
+          cp restore-glb-offline.html _site/index.html
+          test -s _site/index.html
+          if grep -q 'fetch(' _site/index.html; then
+            echo 'Unexpected network fetch in standalone offline tool' >&2
+            exit 1
+          fi
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: './_site'
+      - id: deploy
+        uses: actions/deploy-pages@v4
