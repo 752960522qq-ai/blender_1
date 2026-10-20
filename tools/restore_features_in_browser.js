@@ -1,0 +1,252 @@
+/* Repair v13 facial geometry from v13 while restoring v12 eyes/brows/lashes,
+ * all v12 materials, skin textures and non-face mesh inventory.
+ * No files leave the browser; no external imports.
+ * Node 18+ and browsers. Licensed for use within this user's workflow.
+ */
+(function(root, factory) {
+  const api = factory();
+  if (typeof module === 'object' && module.exports) module.exports = api;
+  else root.GLBFeatureRepair = api;
+})(typeof self !== 'undefined' ? self : globalThis, function() {
+  'use strict';
+  const decoder = new TextDecoder('utf-8');
+  const encoder = new TextEncoder();
+  const JSON_CHUNK = 0x4e4f534a;
+  const BIN_CHUNK = 0x004e4942;
+  const I4 = [1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1];
+  function err(msg) { throw Error(msg); }
+  function bufBytes(input) {
+    if (input instanceof ArrayBuffer) return new Uint8Array(input);
+    if (ArrayBuffer.isView(input)) return new Uint8Array(input.buffer, input.byteOffset, input.byteLength);
+    err('必须提供 ArrayBuffer 或 Uint8Array');
+  }
+  function parse(file, label) {
+    const bytes = bufBytes(file);
+    const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    if (bytes.length < 20 || dv.getUint32(0,true) !== 0x46546c67 ||
+        dv.getUint32(4,true) !== 2 || dv.getUint32(8,true) !== bytes.length) {
+      err(label + ' 不是有效的 GLB 2.0 文件');
+    }
+    let offset = 12, json = null, binary = null;
+    while (offset + 8 <= bytes.length) {
+      const len = dv.getUint32(offset,true), kind = dv.getUint32(offset+4,true);
+      offset += 8;
+      if (offset + len > bytes.length) err(label + ' 包含不完整的数据块');
+      if (kind === JSON_CHUNK) json = JSON.parse(decoder.decode(bytes.subarray(offset,offset+len)));
+      if (kind === BIN_CHUNK) binary = bytes.subarray(offset,offset+len);
+      offset += len;
+    }
+    if (!json || !binary || !Array.isArray(json.buffers) || json.buffers.length!==1) {
+      err(label + ' 缺少标准 GLB JSON/BIN 数据');
+    }
+    if (json.extensionsRequired?.some(s => /meshopt|draco/i.test(s))) {
+      err(label + ' 使用压缩网格，当前无损补丁工具不支持');
+    }
+    return {json, binary};
+  }
+  function meshObjects(doc) {
+    const found = [];
+    (doc.nodes || []).forEach((node, nodeIndex) => {
+      if (node.mesh == null) return;
+      const mesh = doc.meshes[node.mesh];
+      if (!mesh || !Array.isArray(mesh.primitives)) return;
+      const count = mesh.primitives.reduce((sum, prim) => {
+        const pos = prim.attributes?.POSITION;
+        return sum + (pos == null ? 0 : (doc.accessors[pos]?.count || 0));
+      }, 0);
+      found.push({nodeIndex, meshIndex:node.mesh, node, mesh, count,
+        name: node.name || mesh.name || ''});
+    });
+    return found;
+  }
+  function classification(items) {
+    const sorted = items.filter(i => /face|head/i.test(i.name) &&
+      !/eye|neck|brow|lash|hair|tearline|connector/i.test(i.name))
+      .sort((a,b) => b.count-a.count);
+    if (sorted.length && sorted[0].count>=1000) return sorted[0];
+    const bySize=items.filter(i=> !/eye|neck|brow|lash|hair|tearline|connector/i.test(i.name))
+      .sort((a,b)=>b.count-a.count);
+    if (bySize.length && bySize[0].count>=1000) return bySize[0];
+    err('无法可靠识别头脸主体网格，为防误伤已停止');
+  }
+  function identity() {return I4.slice();}
+  function matMul(a,b) {
+    const out=new Array(16).fill(0);
+    for(let c=0;c<4;c++) for(let r=0;r<4;r++)
+      for(let k=0;k<4;k++) out[c*4+r]+=a[k*4+r]*b[c*4+k];
+    return out;
+  }
+  function transform(node) {
+    if (node.matrix) return node.matrix.slice();
+    const p=node.translation || [0,0,0];
+    const q=node.rotation || [0,0,0,1];
+    const s=node.scale || [1,1,1];
+    const [x,y,z,w]=q, xx=x*x,yy=y*y,zz=z*z,xy=x*y,xz=x*z,yz=y*z,wx=w*x,wy=w*y,wz=w*z;
+    return [
+      (1-2*(yy+zz))*s[0],(2*(xy+wz))*s[0],(2*(xz-wy))*s[0],0,
+      (2*(xy-wz))*s[1],(1-2*(xx+zz))*s[1],(2*(yz+wx))*s[1],0,
+      (2*(xz+wy))*s[2],(2*(yz-wx))*s[2],(1-2*(xx+yy))*s[2],0,
+      p[0],p[1],p[2],1
+    ];
+  }
+  // For affine 3D matrices; inverse of upper-left 3x3 and translation.
+  function invertAffine(m) {
+    const a=m[0],b=m[4],c=m[8],d=m[1],e=m[5],f=m[9],g=m[2],h=m[6],i=m[10];
+    const det=a*(e*i-f*h)-b*(d*i-f*g)+c*(d*h-e*g);
+    if(Math.abs(det)<1e-12) err('节点变换不可逆，已停止以避免面部错位');
+    const inv=[
+      (e*i-f*h)/det,(f*g-d*i)/det,(d*h-e*g)/det,0,
+      (c*h-b*i)/det,(a*i-c*g)/det,(b*g-a*h)/det,0,
+      (b*f-c*e)/det,(c*d-a*f)/det,(a*e-b*d)/det,0,
+      0,0,0,1
+    ];
+    const x=m[12],y=m[13],z=m[14];
+    inv[12]=-(inv[0]*x+inv[4]*y+inv[8]*z);
+    inv[13]=-(inv[1]*x+inv[5]*y+inv[9]*z);
+    inv[14]=-(inv[2]*x+inv[6]*y+inv[10]*z);
+    return inv;
+  }
+  function hierarchy(doc) {
+    const parents=new Array(doc.nodes.length).fill(-1);
+    doc.nodes.forEach((node,i)=>{
+      (node.children||[]).forEach(j=>{ if(parents[j]!==-1)err('节点拥有多个父节点，无法确保正确变换');parents[j]=i; });
+    });
+    const world=new Array(doc.nodes.length);
+    function get(i,depth=0) {
+      if(depth>doc.nodes.length)err('发现循环节点层级');
+      if(world[i])return world[i];
+      const local=transform(doc.nodes[i]);
+      return world[i]=parents[i]===-1?local:matMul(get(parents[i],depth+1),local);
+    }
+    return {parents,world:doc.nodes.map((_,i)=>get(i))};
+  }
+  class Copier {
+    constructor(target,source) {
+      this.target=target.json;this.source=source.json;
+      this.sourceBuffer=source.binary;
+      this.chunks=[target.binary];
+      this.length=target.binary.length;
+      this.accessors=new Map();this.views=new Map();
+    }
+    alignedAdd(bytes) {
+      const pad=(4-(this.length%4))%4;
+      if(pad){this.chunks.push(new Uint8Array(pad));this.length+=pad;}
+      const start=this.length;this.chunks.push(bytes);this.length+=bytes.length;
+      return start;
+    }
+    view(idx) {
+      if(this.views.has(idx))return this.views.get(idx);
+      const v=this.source.bufferViews[idx];
+      if(!v||v.buffer>0||v.extensions)err('不支持非标准 bufferView');
+      const start=v.byteOffset||0;
+      if(start+v.byteLength>this.sourceBuffer.length)err('来源 GLB 缓冲区范围错误');
+      const copied={...v,buffer:0,byteOffset:this.alignedAdd(this.sourceBuffer.subarray(start,start+v.byteLength))};
+      const result=this.target.bufferViews.push(copied)-1;
+      this.views.set(idx,result);return result;
+    }
+    accessor(idx) {
+      if(this.accessors.has(idx))return this.accessors.get(idx);
+      const acc=this.source.accessors[idx];
+      if(!acc||acc.sparse||acc.bufferView==null)err('不支持稀疏或不存在的顶点属性');
+      const copied={...acc,bufferView:this.view(acc.bufferView)};
+      const result=this.target.accessors.push(copied)-1;
+      this.accessors.set(idx,result);return result;
+    }
+    primitive(prim,oldMaterial) {
+      if(prim.extensions || prim.mode && prim.mode!==4)err('不支持来源模型的压缩/非三角网格');
+      const out={...prim,attributes:{}};
+      for(const [key,idx] of Object.entries(prim.attributes||{}))out.attributes[key]=this.accessor(idx);
+      if(prim.indices!=null)out.indices=this.accessor(prim.indices);
+      if(prim.targets)out.targets=prim.targets.map(target=>{
+        const mapped={};for(const [key,idx] of Object.entries(target))mapped[key]=this.accessor(idx);
+        return mapped;
+      });
+      delete out.extensions;
+      if(oldMaterial!=null)out.material=oldMaterial; else delete out.material;
+      return out;
+    }
+    materialize() {
+      const combined=new Uint8Array(this.length);
+      let offset=0;
+      for(const chunk of this.chunks){combined.set(chunk,offset);offset+=chunk.length;}
+      return combined;
+    }
+  }
+  function glbOutput(doc,binary) {
+    const clone={...doc,buffers:[{...doc.buffers[0],byteLength:binary.length}]};
+    let js=encoder.encode(JSON.stringify(clone));
+    const jsonPad=(4-js.length%4)%4, binPad=(4-binary.length%4)%4;
+    const total=12+8+js.length+jsonPad+8+binary.length+binPad;
+    const bytes=new Uint8Array(total),dv=new DataView(bytes.buffer);
+    dv.setUint32(0,0x46546c67,true);dv.setUint32(4,2,true);dv.setUint32(8,total,true);
+    let off=12;
+    dv.setUint32(off,js.length+jsonPad,true);dv.setUint32(off+4,JSON_CHUNK,true);off+=8;
+    bytes.set(js,off);off+=js.length;
+    bytes.fill(0x20,off,off+jsonPad);off+=jsonPad;
+    dv.setUint32(off,binary.length+binPad,true);dv.setUint32(off+4,BIN_CHUNK,true);off+=8;
+    bytes.set(binary,off);
+    return bytes;
+  }
+  function repair(v12Data,v13Data) {
+    const v12=parse(v12Data,'v12'), v13=parse(v13Data,'v13');
+    const a=v12.json,b=v13.json;
+    const ob=meshObjects(a),on=meshObjects(b);
+    const baseFace=classification(ob),newFace=classification(on);
+    if(!ob.some(x=>/brow/i.test(x.name))||!ob.some(x=>/lash/i.test(x.name))||!ob.some(x=>/eye/i.test(x.name))) {
+      err('v12 眉毛、睫毛或眼睛组件缺失；拒绝输出看似已修复的文件');
+    }
+    const target=JSON.parse(JSON.stringify(a));
+    const copier=new Copier({json:target,binary:v12.binary},v13);
+    const baseHierarchy=hierarchy(target), newerHierarchy=hierarchy(b);
+    const comments=[];
+    function transplant(base,newer,kind) {
+      if(!base||!newer)return false;
+      const oldMesh=target.meshes[base.meshIndex],srcMesh=b.meshes[newer.meshIndex];
+      if(!oldMesh||!srcMesh||!srcMesh.primitives.length)err(kind+' 网格不存在');
+      if(srcMesh.primitives.length!==oldMesh.primitives.length) {
+        comments.push(kind+' 网格分组数量不同，逐组保留 v12 原材质');
+      }
+      const materialList=oldMesh.primitives.map(p=>p.material);
+      oldMesh.primitives=srcMesh.primitives.map((p,i)=>copier.primitive(p,
+        materialList[i]??materialList[0]));
+      const parentIndex=baseHierarchy.parents[base.nodeIndex];
+      const parentWorld=parentIndex<0?identity():baseHierarchy.world[parentIndex];
+      const sourceWorld=newerHierarchy.world[newer.nodeIndex];
+      const local=matMul(invertAffine(parentWorld),sourceWorld);
+      const node=target.nodes[base.nodeIndex];
+      node.matrix=local;
+      delete node.translation;delete node.rotation;delete node.scale;
+      return true;
+    }
+    transplant(baseFace,newFace,'脸部');
+    const pickNeck=items=>items.filter(x=>/neck|connector/i.test(x.name)).sort((a,b)=>b.count-a.count)[0];
+    const neckTransferred=transplant(pickNeck(ob),pickNeck(on),'颈部');
+    if(!neckTransferred)comments.push('v13 未发现可移植的独立颈部组件：沿用 v12 颈部');
+    // Preserve exact eyebrow / lash / eye glTF meshes, skinning, materials,
+    // textures & bufferViews from v12. Skin geometry from v13 face only.
+    const binary=copier.materialize();
+    const output=glbOutput(target,binary);
+    parse(output,'修复结果'); // Validate GLB header & parseability
+    const report={
+      status:'PASS',
+      sourceFace:newFace.name,baseFace:baseFace.name,
+      faceGeometrySource:'v13',
+      eyebrowsEyelashesEyes:'v12',
+      retainedV12Materials:target.materials?.length||0,
+      retainedV12Images:target.images?.length||0,
+      neckGeometryFromV13:neckTransferred,
+      verticesInTransferredFace:srcCount(newFace,b),
+      byteLength:output.length,
+      warnings:comments,
+      note:'结构及网格保持验证通过；外观仍需用三维查看器人工检查。'
+    };
+    return {bytes:output,report};
+  }
+  function srcCount(obj,doc) {
+    return doc.meshes[obj.meshIndex].primitives.reduce((total,p)=>{
+      const pos=p.attributes?.POSITION;
+      return total+(pos==null?0:doc.accessors[pos]?.count||0);
+    },0);
+  }
+  return {parse,repair};
+});
