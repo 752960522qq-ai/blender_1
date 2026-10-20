@@ -1,0 +1,32 @@
+name: Offline GLB Feature Restore Tests
+on:
+  push:
+    branches: [main]
+    paths:
+      - "tools/restore_features_in_browser.js"
+      - "tools/test_browser_glb_restore.js"
+      - "restore-glb-offline.html"
+      - ".github/workflows/browser-feature-restore-test.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  offline-glb-smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify Node.js runtime
+        run: node --version
+      - name: Test v13 geometry transplant and original v12 eye/brow/lash retention
+        run: node tools/test_browser_glb_restore.js
+      - name: Upload validation artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: offline-feature-restoration-test
+          path: offline-test-output/
+          if-no-files-found: warn
+          retention-days: 3
