@@ -1,0 +1,116 @@
+name: GLB Features Recovery Without Blender
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'tools/repair_glb_features.py'
+      - '.github/workflows/restore-glb-features.yml'
+  workflow_dispatch:
+    inputs:
+      run_mode:
+        description: "Smoke on test GLB, or repair real v13 using v12"
+        type: choice
+        options: [smoke, repair]
+        required: true
+        default: smoke
+      v12_path:
+        description: "Repository-relative v12 GLB with correct brows/lashes/eyes"
+        required: false
+        default: 'models/jill_head_refined_eye_jaw_v12.glb'
+        type: string
+      v13_path:
+        description: "Repository-relative v13 GLB whose face/neck shape must be kept"
+        required: false
+        default: 'models/jill_head_refined_eye_jaw_v13.glb'
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  patch-glb:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.run_mode || 'smoke' }}
+      USER_V12: ${{ github.event_name == 'workflow_dispatch' && inputs.v12_path || '' }}
+      USER_V13: ${{ github.event_name == 'workflow_dispatch' && inputs.v13_path || '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate supplied paths and select source models
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import os
+          root = Path(os.environ['GITHUB_WORKSPACE']).resolve()
+          if os.environ['MODE'] not in ('smoke','repair'):
+              raise SystemExit('Unsupported mode')
+          if os.environ['MODE'] == 'smoke':
+              p = root/'models/head-input.glb'
+              if not p.is_file():
+                  raise SystemExit('Missing repository smoke test model')
+              v12 = v13 = p
+          else:
+              result = []
+              for env in ('USER_V12','USER_V13'):
+                  rel = Path(os.environ[env])
+                  if not rel.as_posix() or rel.is_absolute() or '..' in rel.parts or rel.suffix.lower() != '.glb':
+                      raise SystemExit('Invalid path for ' + env)
+                  target = (root/rel).resolve()
+                  if not target.is_relative_to(root) or not target.is_file():
+                      raise SystemExit('User model not present on remote runner: ' + str(rel))
+                  result.append(target)
+              v12,v13 = result
+              if v12 == v13:
+                  raise SystemExit('Real repair mode needs two different input files')
+          with open(os.environ['GITHUB_ENV'], 'a') as handle:
+              handle.write('GLB_V12='+str(v12)+'\\n')
+              handle.write('GLB_V13='+str(v13)+'\\n')
+          print('INPUTS_VERIFIED',os.environ['MODE'],v12,v13)
+          PY
+
+      - name: Install alternative mesh toolchain (no Blender)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet 'numpy>=1.24,<3' 'trimesh>=4,<5'
+
+      - name: Restore GLB with binary-preserving patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p output
+          python3 tools/repair_glb_features.py "$GLB_V12" "$GLB_V13"             output/jill_head_refined_eye_jaw_v14_restored.glb | tee output/repair.log
+
+      - name: Independently validate output as GLB with Trimesh
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' | tee output/validation.log
+          import os
+          import trimesh
+          path='output/jill_head_refined_eye_jaw_v14_restored.glb'
+          scene=trimesh.load(path, force='scene')
+          if len(scene.geometry) < 3:
+              raise SystemExit('Output unexpectedly lost brows/lashes/eyes geometry')
+          if not any('eye' in n.lower() for n in scene.graph.nodes_geometry):
+              raise SystemExit('Eye model was lost')
+          if not any('lash' in n.lower() for n in scene.graph.nodes_geometry):
+              raise SystemExit('Lash model was lost')
+          if not any('brow' in n.lower() for n in scene.graph.nodes_geometry):
+              raise SystemExit('Eyebrow model was lost')
+          assert os.path.getsize(path) > 10000
+          print('ALTERNATIVE_GLTF_ROUNDTRIP_OK',len(scene.geometry),os.path.getsize(path))
+          PY
+
+      - name: Upload GLB and reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: glb-features-${{ github.event_name == 'workflow_dispatch' && inputs.run_mode || 'smoke' }}
+          path: output/
+          if-no-files-found: warn
+          retention-days: 7
